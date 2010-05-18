@@ -77,12 +77,14 @@
 		</script>
 
 		<h1>Sample chat client</h1>
+		<h2>(Loaned from the <a href="http://www.learnboost.com/">LearnBoost's</a> <a href="http://github.com/LearnBoost/Socket.IO-node">Socket.IO-node</a> project)</h2>
 		<div id="chat"><p>Connecting...</p></div>
 		<form id="form" onsubmit="send(); return false">
 			<input type="text" autocomplete="off" id="text" /><input type="submit" value="Send" />
 		</form>
 
 		<style type="text/css">
+			h2 { font-size: 12px; margin-bottom: 20px; }
 			#chat { height: 300px; overflow: auto; width: 800px; border: 1px solid #eee; font: 13px Helvetica, Arial; }
 			#chat p { padding: 8px; margin: 0; }
 			#chat p:nth-child(odd) { background: #F6F6F6; }

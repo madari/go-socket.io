@@ -18,21 +18,6 @@ func main() {
 	sio := socketio.NewSocketIO(nil)
 	sio.Mux("/socket.io/", nil)
 
-	// Server static files under www/
-	http.Handle("/", http.FileServer("www/", "/"))
-
-	// Serve
-	defer func() {
-		log.Stdout("Server started. Tune your browser to http://localhost:8080/")
-		if err := http.ListenAndServe(":8080", nil); err != nil {
-			log.Stdout("ListenAndServe: %s", err.String())
-			os.Exit(1)
-		}
-	}()
-
-
-	//// SOCKET.IO EVENT HANDLERS ////
-
 	// Client connected
 	// Send the buffer to the client and broadcast announcement
 	sio.OnConnect(func(c *socketio.Conn) {
@@ -60,4 +45,13 @@ func main() {
 
 		sio.BroadcastExcept(c, payload)
 	})
+	
+	// Server static files under www/
+	http.Handle("/", http.FileServer("www/", "/"))
+
+	log.Stdout("Server starting. Tune your browser to http://localhost:8080/")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Stdout("ListenAndServe: ", err.String())
+		os.Exit(1)
+	}
 }
