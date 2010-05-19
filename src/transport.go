@@ -6,6 +6,8 @@ import (
 	"io"
 )
 
+var ErrNotConnected = os.NewError("not connected")
+
 // DefaultTransportConfigSet holds the defaults
 var DefaultTransportConfigSet = []TransportConfig{
 	XHRPollingTransportConfig(120e9),

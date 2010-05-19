@@ -55,7 +55,8 @@ func (t *xhrMultipartTransport) Config() TransportConfig {
 func (t *xhrMultipartTransport) handle(conn *http.Conn, req *http.Request) (err os.Error) {
 	switch req.Method {
 	case "GET":
-		if rwc, _, err := conn.Hijack(); err == nil {
+		rwc, _, err := conn.Hijack();
+		if err == nil {
 			_, err = fmt.Fprint(rwc,
 				"HTTP/1.0 200 OK\r\n",
 				"Content-Type: multipart/x-mixed-replace; boundary=\"socketio\"\r\n",
@@ -104,7 +105,7 @@ func (t *xhrMultipartTransport) closer() {
 // Write sends a single multipart message to the wire
 func (t *xhrMultipartTransport) Write(p []byte) (n int, err os.Error) {
 	if !t.connected {
-		return 0, os.EOF
+		return 0, ErrNotConnected
 	}
 
 	n, err = fmt.Fprintf(t.rwc,

@@ -55,7 +55,7 @@ func (dm *dMutex) Lock(acquirer string) {
 
 func (dm *dMutex) Unlock() {
 	//log.Stdoutf("DMutex/%s[%s]: releasing lock", dm.name, dm.owner)
-	dm.mutex.Unlock()
 	dm.locked = false
 	dm.owner = "-"
+	dm.mutex.Unlock()
 }

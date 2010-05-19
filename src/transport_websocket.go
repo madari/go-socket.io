@@ -52,40 +52,35 @@ func (t *websocketTransport) String() string {
 	return t.tc.Resource()
 }
 
-// Handles a http connection & request pair
+// Handles a http connection & request pair. It upgrades the connection
+// according either to the Draft75 or the bleeding edge specification.
 func (t *websocketTransport) handle(conn *http.Conn, req *http.Request) (err os.Error) {
-	go func() {
+	f := func(ws *websocket.Conn) {
+		t.ws = ws
+		t.connected = true
+		t.conn.onConnect()
 
-		f := func(ws *websocket.Conn) {
-			t.ws = ws
-			t.connected = true
-			t.conn.onConnect()
+		t.reader()
+	}
 
-			// try to read forever and close the socket after read fails
-			t.reader()
-		}
-		
-		// upgrade the connection
-		if t.tc.Draft75 {
-			websocket.Draft75Handler(f).ServeHTTP(conn, req)
-		} else {
-			websocket.Handler(f).ServeHTTP(conn, req)
-		}
-	}()
+	if t.tc.Draft75 {
+		go websocket.Draft75Handler(f).ServeHTTP(conn, req)
+	} else {
+		go websocket.Handler(f).ServeHTTP(conn, req)
+	}
 
 	return
 }
 
 // Reader reads data from the websocket and handles timeouts.
 // It passes the read messages to the owner's onMessage handler
-// When it encounters an EOF or other errors on the line,
-// it will call the Close function.
+// and when it encounters an EOF or other (fatal) errors on the line,
+// it will call the Close function
 func (t *websocketTransport) reader() {
 	buf := make([]byte, 2048)
 
 	defer t.Close()
 
-	// set timeout if specified by the configuration
 	if t.tc.To > 0 {
 		t.ws.SetReadTimeout(t.tc.To)
 	}
@@ -93,13 +88,10 @@ func (t *websocketTransport) reader() {
 	for {
 		nr, err := t.ws.Read(buf)
 		if err != nil {
-			// if an unknown error is encountered, then return
-			// and close the connection, otherwise keep on reading
 			if err != os.E2BIG && err != os.EAGAIN {
 				return
 			} else {
-				// TODO: handle os.E2BIG properly so that the big messages
-				//       don't get discarded
+				// TODO: handle os.E2BIG properly
 				continue
 			}
 		}
@@ -114,7 +106,7 @@ func (t *websocketTransport) reader() {
 // and an nil error if write succeeded
 func (t *websocketTransport) Write(p []byte) (n int, err os.Error) {
 	if !t.connected {
-		return 0, os.EOF
+		return 0, ErrNotConnected
 	}
 
 	n, err = t.ws.Write(p)

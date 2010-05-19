@@ -5,12 +5,13 @@ import (
 	"os"
 	"container/vector"
 	"crypto/rand"
+	"io"
 )
 
 const (
-	ConnMaxWaitTicks = 5  // allow clients to reconnect in max 5 seconds (1 tick/second)
+	ConnMaxWaitTicks = 5  // allow clients to reconnect in max 5 ticks
 	ConnMaxBuffer    = 20 // amount of messages to persist at most
-	SessionIDLength  = 10 // length of the session id
+	SessionIDLength  = 16 // length of the session id
 	SessionIDCharset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
 
@@ -19,25 +20,22 @@ var (
 	ErrBufferFull = os.NewError("The connection buffer was full")
 )
 
-// NewSessionID creates a new session id
+// NewSessionID creates a new session id consisting of
+// of SessionIDLength chars from the SessionIDCharset
 func newSessionID() (sessionid string, err os.Error) {
-	bytes := make([]byte, SessionIDLength)
-	n := 0
+	b := make([]byte, SessionIDLength)
 
-	for n < SessionIDLength {
-		if x, err := rand.Read(bytes[n:]); err != nil && err != os.EAGAIN {
-			return
-		} else {
-			n += x
-		}
+	if _, err = io.ReadFull(rand.Reader, b); err != nil {
+		return
 	}
 
-	sidlen := uint8(len(SessionIDCharset))
+	clen := uint8(len(SessionIDCharset))
+
 	for i := 0; i < SessionIDLength; i++ {
-		bytes[i] = SessionIDCharset[bytes[i]%sidlen]
+		b[i] = SessionIDCharset[b[i]%clen]
 	}
 
-	sessionid = string(bytes)
+	sessionid = string(b)
 	return
 }
 
@@ -54,7 +52,6 @@ type Conn struct {
 	handshaked bool           // is the handshake sent
 	destroyed  bool           // is the conn destroyed
 	wakeup     chan byte      // used internally to wake up the flusher
-	flushed    chan int       // used internally to signal message delivery
 }
 
 // Returns a new connection to be used with sio
@@ -69,7 +66,6 @@ func newConn(sio *SocketIO) (c *Conn, err os.Error) {
 		sio:       sio,
 		sessionid: sessionid,
 		wakeup:    make(chan byte),
-		flushed:   make(chan int),
 		queue:     new(vector.Vector),
 		tLock:     newDMutex("transport:" + sessionid),
 		queueLock: newDMutex("queue:" + sessionid),
@@ -106,38 +102,24 @@ func (c *Conn) Send(data interface{}) (err os.Error) {
 	return
 }
 
-// WaitFlush blocks until a succesfull network write is made. For now it is the only
-// way to detect deliveries.
-// TODO: a better way
-func (c *Conn) WaitFlush() (int, os.Error) {
-	if c.destroyed {
-		return 0, ErrDestroyed
-	}
-	return <-c.flushed, nil
-}
-
 
 //// INTERNAL IMPLEMENTATION  ////
 
-// Handle takes over an http conn/req -pair using the TransportConfig tc
+// Handle takes over an http conn/req -pair using a TransportConfig.
 // If the connection already has the same kind of transport assigned to it,
-// it uses it, but if the transports don't match a new transport is created
-// from the tc.
+// it re-uses it, but if the transports don't match then a new transport is created
+// using the tc.
 func (c *Conn) handle(tc TransportConfig, conn *http.Conn, req *http.Request) (err os.Error) {
 	if c.destroyed {
 		return os.EOF
 	}
 
 	if c.t != nil && tc == c.t.Config() {
-		// we already had the right kind of transport assigned to us so let's
-		// just re-use it
 		err = c.t.handle(conn, req)
 	} else {
-		// let's create a new transport from the tc given to us
 		go c.flusher()
 
 		c.tLock.Lock("c.reconnect")
-		// if an old transport exists, close it first
 		if c.t != nil {
 			c.t.Close()
 		}
@@ -145,29 +127,27 @@ func (c *Conn) handle(tc TransportConfig, conn *http.Conn, req *http.Request) (e
 		c.t = transport
 		c.tLock.Unlock()
 
-		// hand the http conn/req pair to the transport
 		err = transport.handle(conn, req)
 	}
 	return
 }
 
 
-// Destroyer waits for a reconnection in ConnMaxWait seconds and
-// destroyes the connection after that if the client has not re-appeared.
+// The destroyer handles the final destroying of the actual
+// connection, after its network connection was lost. It first waits for
+// ConnMaxWaitTicks and checks if the client has reconnected. If so
+// then it aborts the destroying.
 func (c *Conn) destroyer() {
 	numConns := c.numConns
 
-	// get a slot from the ticker broadcaster
 	slot := <-c.sio.ticker.Register
 	defer func() {
 		c.sio.ticker.Unregister <- slot
 	}()
 
-	// wait for at least ConnMaxWaitTicks
 	for i := 0; i < ConnMaxWaitTicks; i++ {
 		<-slot.Value.(chan interface{})
 
-		// if the client as reconnected, then exit the destroyer
 		if c.numConns > numConns {
 			return
 		}
@@ -177,7 +157,7 @@ func (c *Conn) destroyer() {
 }
 
 // Destroy marks the connection destroyed and notifies the sio
-// about disconnection
+// about the disconnection
 func (c *Conn) destroy() {
 	c.queueLock.Lock("destroy")
 	c.tLock.Lock("destroy")
@@ -218,7 +198,6 @@ func (c *Conn) flusher() {
 					// write succeeded, so let's clear the message queue and notify
 					// the listeners
 					c.queue = c.queue.Resize(0, 0)
-					_ = c.flushed <- l
 				}
 				c.tLock.Unlock()
 			}

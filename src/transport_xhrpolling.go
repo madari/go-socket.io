@@ -55,7 +55,8 @@ func (t *xhrPollingTransport) Config() TransportConfig {
 func (t *xhrPollingTransport) handle(conn *http.Conn, req *http.Request) (err os.Error) {
 	switch req.Method {
 	case "GET":
-		if rwc, _, err := conn.Hijack(); err == nil {
+		rwc, _, err := conn.Hijack();
+		if err == nil {
 			t.rwc = rwc
 			t.connected = true
 			go t.closer()
@@ -94,7 +95,7 @@ func (t *xhrPollingTransport) closer() {
 // Write sends a single message to the wire and closes the connection
 func (t *xhrPollingTransport) Write(p []byte) (n int, err os.Error) {
 	if !t.connected {
-		return 0, os.EOF
+		return 0, ErrNotConnected
 	}
 
 	n, err = fmt.Fprintf(t.rwc,
