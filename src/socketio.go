@@ -13,32 +13,29 @@
 	doesn't need a full network port for itself. It has an callback-style event
 	handling API. The callbacks are:
 
-		- socketio.OnConnect
-		- socketio.OnDisconnect
-		- socketio.OnMessage
+		- SocketIO.OnConnect
+		- SocketIO.OnDisconnect
+		- SocketIO.OnMessage
 
-	The callbacks will block different parts of the server, and hence it is the user's
-	responsibility to take this into account. Other utility-methods include:
+	Other utility-methods include:
 
-		- socketio.Mux
-		- socketio.Broadcast
-		- socketio.BroadcastExcept
-		- socketio.IterConns
-		- socketio.GetConn
+		- SocketIO.Mux
+		- SocketIO.Broadcast
+		- SocketIO.BroadcastExcept
+		- SocketIO.IterConns
+		- SocketIO.GetConn
 
 	Each new connection will be automatically assigned an unique session id and
-	using those the clients can reconnect without losing messages: the socketio
-	package persists client's pending messages (until some configurable point) if
-	they can't be immediately delivered. All writes through the API are by design
-	asynchronous. For critical messages the package provides a way to detect succesful
-	deliveries by using socketio.Conn.WaitFlush [TODO: better solution]. All-in-all,
-	the socketio.Conn type has two methods to handle message passing:
+	using those the clients can reconnect without losing messages: the server
+	persists clients' pending messages (until some configurable point) if they can't
+	be immediately delivered. All writes are by design asynchronous and can be made
+	through Conn.Send.
 
-		- socketio.Conn.Send
-		- socketio.Conn.WaitFlush
+	Finally, the actual format on the wire is described by a separate `Formatter`.
+	The default formatter is compatible with the LearnBoost's
+	Socket.IO client.
 
-	The socketio package itself is completely thread-safe. For example, here is a
-	simple chat server:
+	For example, here is a simple chat server:
 
 		package main
 
@@ -48,35 +45,25 @@
 			"socketio"
 		)
 
-		// A very simple chat server
 		func main() {
-			// create the server and mux it to /socket.io/ in http.DefaultServeMux
 			sio := socketio.NewSocketIO(nil)
 			sio.Mux("/socket.io/", nil)
 
-			// serve static files under www/
 			http.Handle("/", http.FileServer("www/", "/"))
 
-			// client connected. Let everyone know about this.
 			sio.OnConnect(func(c *socketio.Conn) {
-				// socketio does not care what you are sending as long as it is
-				// marshallable by the standard json-package
 				sio.Broadcast(struct{ announcement string }{"connected: " + c.String()})
 			})
 
-			// client disconnected. Let the other users know about this.
 			sio.OnDisconnect(func(c *socketio.Conn) {
-				sio.BroadcastExcept(c,
-					struct{ announcement string }{"disconnected: " + c.String()})
+				sio.BroadcastExcept(c, struct{ announcement string }{"disconnected: " + c.String()})
 			})
 
-			// client sent a message. Let's broadcast it to the other users.
 			sio.OnMessage(func(c *socketio.Conn, msg string) {
 				sio.BroadcastExcept(c,
 					struct{ message []string }{[]string{c.String(), msg}})
 			})
 
-			// start serving
 			log.Stdout("Server started.")
 			if err := http.ListenAndServe(":8080", nil); err != nil {
 				log.Stdout("ListenAndServe: %s", err.String())
