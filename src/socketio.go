@@ -78,6 +78,7 @@ import (
 	"os"
 	"log"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -86,7 +87,7 @@ import (
 type SocketIO struct {
 	*log.Logger
 	sessions     map[string]*Conn  // holds the outstanding sessions
-	sessionsLock *dMutex           // protects the sessions
+	sessionsLock *sync.RWMutex       // protects the sessions
 	transports   []TransportConfig // holds the configurable transport set
 	ticker       *Broadcaster      // a ticker providing signals every second
 	formatter    Formatter         // encode & decode on-the-wire format
@@ -113,7 +114,7 @@ func NewSocketIO(transports []TransportConfig) (sio *SocketIO) {
 		Logger:       DefaultLogger,
 		transports:   transports,
 		sessions:     make(map[string]*Conn),
-		sessionsLock: newDMutex("sessions"),
+		sessionsLock: new(sync.RWMutex),
 		ticker:       NewBroadcaster(),
 		formatter:    DefaultFormatter{},
 	}
@@ -151,14 +152,14 @@ func (sio *SocketIO) IterConns() <-chan *Conn {
 	c := make(chan *Conn)
 
 	go func() {
-		sio.sessionsLock.Lock("sio.IterConns")
+		sio.sessionsLock.RLock()
 		for _, conn := range sio.sessions {
 			if closed(c) {
 				break
 			}
 			c <- conn
 		}
-		sio.sessionsLock.Unlock()
+		sio.sessionsLock.RUnlock()
 		close(c)
 	}()
 
@@ -167,9 +168,9 @@ func (sio *SocketIO) IterConns() <-chan *Conn {
 
 // GetConn is a tread-safe way for looking up a connection by its session id
 func (sio *SocketIO) GetConn(sessionid string) (c *Conn) {
-	sio.sessionsLock.Lock("sio.GetConn")
+	sio.sessionsLock.RLock()
 	c = sio.sessions[sessionid]
-	sio.sessionsLock.Unlock()
+	sio.sessionsLock.RUnlock()
 	return
 }
 
@@ -299,7 +300,7 @@ func (sio *SocketIO) handle(t TransportConfig, conn *http.Conn, req *http.Reques
 
 // SetConn stores the connection c by sessionid in a thread-safe way
 func (sio *SocketIO) setConn(sessionid string, c *Conn) {
-	sio.sessionsLock.Lock("sio.setConn")
+	sio.sessionsLock.Lock()
 	sio.sessions[sessionid] = c
 	sio.sessionsLock.Unlock()
 }
@@ -321,7 +322,7 @@ func (sio *SocketIO) onConnect(c *Conn) {
 // to be lost. It calls the user's OnDisconnect callback.
 func (sio *SocketIO) onDisconnect(c *Conn) {
 	sio.Log("sio/onDisconnect:", c.String())
-	sio.sessionsLock.Lock("sio.onDisconnect")
+	sio.sessionsLock.Lock()
 	sio.sessions[c.sessionid] = nil, false
 	sio.sessionsLock.Unlock()
 
@@ -333,7 +334,6 @@ func (sio *SocketIO) onDisconnect(c *Conn) {
 // OnMessage is invoked by a connection when a new message arrives. It passes
 // this message to the user's OnMessage callback.
 func (sio *SocketIO) onMessage(c *Conn, msg string) {
-	sio.Log("sio/onMessage:", c.String())
 	if sio.callbacks.onConnect != nil {
 		sio.callbacks.onMessage(c, msg)
 	}

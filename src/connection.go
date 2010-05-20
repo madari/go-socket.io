@@ -3,8 +3,8 @@ package socketio
 import (
 	"http"
 	"os"
-	"container/vector"
 	"crypto/rand"
+	"sync"
 	"io"
 )
 
@@ -45,13 +45,12 @@ type Conn struct {
 	t          transport // the i/o connection
 	sio        *SocketIO // the server
 	sessionid  string
-	queue      *vector.Vector // holds the undelivered messages
-	tLock      *dMutex        // protects the i/o connection
-	queueLock  *dMutex        // protects the message queue
+	queue      chan interface{} // buffers the outgoing messages
+	tLock      *sync.Mutex    // protects the i/o connection
 	numConns   int            // total number of requests
 	handshaked bool           // is the handshake sent
 	destroyed  bool           // is the conn destroyed
-	wakeup     chan byte      // used internally to wake up the flusher
+	heartbeat  chan byte      // used internally to wake up the flusher
 }
 
 // Returns a new connection to be used with sio
@@ -65,10 +64,9 @@ func newConn(sio *SocketIO) (c *Conn, err os.Error) {
 	c = &Conn{
 		sio:       sio,
 		sessionid: sessionid,
-		wakeup:    make(chan byte),
-		queue:     new(vector.Vector),
-		tLock:     newDMutex("transport:" + sessionid),
-		queueLock: newDMutex("queue:" + sessionid),
+		heartbeat: make(chan byte),
+		queue:     make(chan interface{}, ConnMaxBuffer),
+		tLock:     new(sync.Mutex),
 	}
 
 	return
@@ -87,18 +85,13 @@ func (c *Conn) String() string {
 // has reached ConnMaxBuffer, then the data is dropped and a false is returned.
 func (c *Conn) Send(data interface{}) (err os.Error) {
 	if !c.destroyed {
-		c.queueLock.Lock("c.Send")
-		if c.queue.Len() < ConnMaxBuffer {
-			c.queue.Push(data)
-		} else {
+		if ok := c.queue <- data; !ok {
 			err = ErrBufferFull
 		}
-		c.queueLock.Unlock()
-
-		_ = c.wakeup <- 1
 	} else {
 		err = ErrDestroyed
 	}
+
 	return
 }
 
@@ -119,7 +112,7 @@ func (c *Conn) handle(tc TransportConfig, conn *http.Conn, req *http.Request) (e
 	} else {
 		go c.flusher()
 
-		c.tLock.Lock("c.reconnect")
+		c.tLock.Lock()
 		if c.t != nil {
 			c.t.Close()
 		}
@@ -159,50 +152,65 @@ func (c *Conn) destroyer() {
 // Destroy marks the connection destroyed and notifies the sio
 // about the disconnection
 func (c *Conn) destroy() {
-	c.queueLock.Lock("destroy")
-	c.tLock.Lock("destroy")
+	c.tLock.Lock()
 	c.destroyed = true
 	c.sio.onDisconnect(c)
 	c.tLock.Unlock()
-	c.queueLock.Unlock()
 
-	close(c.wakeup)
+	close(c.heartbeat)
 }
 
-// Flusher waits for signals on the wakeup-channel and tries to
-// flush the message queue to the underlaying transport
+// Flusher waits for messages on the queue. It then
+// tries to write the messages to the underlaying transport and
+// will keep on trying until the heartbeat is killed or the payload
+// can be delivered. It is responsible for persisting messages until they
+// can be succesfully delivered. No more than ConnMaxBuffer messages should
+// ever be waiting for delivery.
+// NOTE: the ConnMaxBuffer is not a "hard limit", because one could have
+// max amount of messages waiting in the queue and in the payload itself
+// simultaneously.
 func (c *Conn) flusher() {
-	// wait for a signal
-	for _ = range c.wakeup {
-		if closed(c.wakeup) {
-			return
+	payload := make([]interface{}, ConnMaxBuffer)
+
+	for msg := range c.queue {
+		payload[0] = msg
+
+		n := 1
+		for {
+			msg, ok := <-c.queue
+			if !ok || n >= ConnMaxBuffer {
+				break
+			}
+
+			payload[n] = msg
+			n++
 		}
 
-		c.queueLock.Lock("flusher")
-		if l := c.queue.Len(); l > 0 {
+		data, err := c.sio.formatter.PayloadEncoder(payload[0:n])
+		if err != nil {
+			c.sio.Log("conn/flusher: payloadEncoder:", err.String())
+			continue
+		}
 
-			// queue had messages in it so let's encode them
-			if data, err := c.sio.formatter.PayloadEncoder(c.queue); err != nil {
-				// encoding failed
-				// TODO: gracefull handling
-				c.sio.Log("conn/flusher: payloadEncoder:", err.String())
-				c.queue = c.queue.Resize(0, 0)
-			} else {
-				// encoded payload is now in p, so let's try to write it
-				c.tLock.Lock("flusher")
-				if _, err := c.t.Write(data); err != nil {
-					// write failed, so let's not do anything. A new delivery
-					// will be attempted after the next signal
-					c.sio.Log("conn/flusher: write:", err.String())
-				} else {
-					// write succeeded, so let's clear the message queue and notify
-					// the listeners
-					c.queue = c.queue.Resize(0, 0)
-				}
+		L: for {
+			for {
+				c.tLock.Lock()
+				_, err = c.t.Write(data)
 				c.tLock.Unlock()
+
+				if err == nil {
+					break L
+				} else if err != os.EAGAIN {
+					c.sio.Log("conn/flusher: write:", err.String())
+					break
+				}
+			}
+
+			<-c.heartbeat
+			if closed(c.heartbeat) {
+				return
 			}
 		}
-		c.queueLock.Unlock()
 	}
 }
 
@@ -228,11 +236,12 @@ func (c *Conn) onConnect() {
 		}
 
 		// bypass the message queue and send the handshake
-		c.tLock.Lock("c.onConnect")
+		c.tLock.Lock()
 		_, err = c.t.Write(data)
 		if err != nil {
 			c.sio.Log("conn/onConnect: write:", err.String())
 			c.t.Close()
+			c.tLock.Unlock()
 			return
 		}
 		c.tLock.Unlock()
@@ -242,8 +251,7 @@ func (c *Conn) onConnect() {
 	}
 
 	c.numConns++
-
-	_ = c.wakeup <- 1
+	_ = c.heartbeat <- 1
 }
 
 // OnDisconnect is invoked by the transport. It creates a destroyer, which
