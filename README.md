@@ -2,22 +2,22 @@ go-socket.io
 ============
 
 The `socketio` package is a simple abstraction layer for different web browser-
-supported transport mechanisms. It is meant to be fully compatible with the
+supported transport mechanisms. It is _meant_ to be fully compatible with the
 [Socket.IO client](http://github.com/LearnBoost/Socket.IO) JavaScript-library by
-[LearnBoost Labs](http://socket.io/), but through custom formatters it should
-suit for any client implementation.
+[LearnBoost Labs](http://socket.io/). A couple of patches to the client library are
+required due to the nature of canonicalization happening
+deep within the standard `http`-package. These patches will hopefully get merged
+into the official repository at some point. Meanwhile,
+[use this fork of the client](http://github.com/madari/Socket.IO). Using custom codecs
+the `socketio` could be perhaps used with other clients, too.
 
 It provides an easy way for developers to rapidly prototype with the most
 popular browser transport mechanism today:
 
 - [HTML5 WebSockets](http://dev.w3.org/html5/websockets/)
-- [XHR Polling](http://en.wikipedia.org/wiki/Comet_%28programming%29#XMLHttpRequest_long_polling)
+- [JSONP Long Polling](http://en.wikipedia.org/wiki/JSONP#JSONP)
+- [XHR Long Polling](http://en.wikipedia.org/wiki/Comet_%28programming%29#XMLHttpRequest_long_polling)
 - [XHR Multipart Streaming](http://en.wikipedia.org/wiki/Comet_%28programming%29#XMLHttpRequest)
-
-## Disclaimer
-
-**The go-socket.io is still very experimental, and you should consider it as an
-early prototype.**
 
 ## Crash course
 
@@ -37,19 +37,15 @@ Other utility-methods include:
 - *SocketIO.BroadcastExcept*
 - *SocketIO.GetConn*
 
-Each new connection will be automatically assigned an unique session id and
+Each new connection will be automatically assigned an session id and
 using those the clients can reconnect without losing messages: the server
 persists clients' pending messages (until some configurable point) if they can't
 be immediately delivered. All writes are by design asynchronous and can be made
-through `Conn.Send`.
+through `Conn.Send`. The server also abstracts handshaking and various keep-alive mechanisms.
 
 Finally, the actual format on the wire is described by a separate `Codec`.
-The default codec `SIOCodec` is _almost_ compatible with the LearnBoost's
-[Socket.IO client](http://github.com/LearnBoost/Socket.IO). A couple of patches
-were required due to the nature of canonicalization happening
-deep within the standard `http`-package. These patches will hopefully get merged
-into the official repository at some point. Meanwhile,
-[use this fork](http://github.com/madari/Socket.IO).
+The default bundled codec, `SIOCodec`, is fully compatible with the LearnBoost's
+[Socket.IO client](http://github.com/LearnBoost/Socket.IO).
 
 ## Example: A simple chat server
 
@@ -92,7 +88,7 @@ You can get the code and run the bundled example by following these steps:
 
 	$ git clone git://github.com/madari/go-socket.io.git
 	$ cd go-socket.io
-	$ git submodule update --init
+	$ git submodule update --init --recursive
 	$ cd example
 	$ make
 	$ ./example
