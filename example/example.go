@@ -4,7 +4,6 @@ import (
 	"container/vector"
 	"http"
 	"log"
-	"os"
 	"socketio"
 	"sync"
 )
@@ -13,17 +12,17 @@ import (
 func main() {
 	buffer := new(vector.Vector)
 	mutex := new(sync.Mutex)
-
+	
 	// create the socket.io server and mux it to /socket.io/
-	sio := socketio.NewSocketIO(nil)
-	sio.Mux("/socket.io/", nil)
-
+	config := socketio.DefaultConfig
+	config.Origins = []string{"localhost:8080"}
+	sio := socketio.NewSocketIO(&config)
+	
 	// when a client connects - send it the buffer and broadcasta an announcement
 	sio.OnConnect(func(c *socketio.Conn) {
 		mutex.Lock()
-		c.Send(struct{ buffer []interface{} }{buffer.Data()})
+		c.Send(struct{ buffer []interface{} }{buffer.Copy()})
 		mutex.Unlock()
-
 		sio.Broadcast(struct{ announcement string }{"connected: " + c.String()})
 	})
 
@@ -33,21 +32,20 @@ func main() {
 	})
 
 	// when a client send a message - broadcast and store it
-	sio.OnMessage(func(c *socketio.Conn, msg string) {
-		payload := struct{ message []string }{[]string{c.String(), msg}}
-
+	sio.OnMessage(func(c *socketio.Conn, msg socketio.Message) {
+		payload := struct{ message []string }{[]string{c.String(), msg.Data()}}
 		mutex.Lock()
 		buffer.Push(payload)
 		mutex.Unlock()
-
-		sio.BroadcastExcept(c, payload)
+		sio.Broadcast(payload)
 	})
-	
+
+	log.Println("Server starting. Tune your browser to http://localhost:8080/")
+
+	sio.Mux("/socket.io/", nil)
 	http.Handle("/", http.FileServer("www/", "/"))
 
-	log.Stdout("Server starting. Tune your browser to http://localhost:8080/")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Stdout("ListenAndServe: ", err.String())
-		os.Exit(1)
+		log.Exit("ListenAndServe:", err)
 	}
 }

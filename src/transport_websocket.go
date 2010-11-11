@@ -6,120 +6,103 @@ import (
 	"websocket"
 )
 
-// websocketTransportConfig is the configuration set
-type websocketTransportConfig struct {
-	To int64 // the maximum outstanding time until a reconnection is forced
-	Draft75 bool // use draft75 or the bleeding edge
+var errWebsocketHandshake = os.NewError("websocket handshake error")
+
+// The websocket transport.
+type websocketTransport struct {
+	rtimeout int64 // The period during which the client must send a message.
+	wtimeout int64 // The period during which a write must succeed.
 }
 
-// WebsocketTransportConfig is the public function to create a configuration set.
-// to is the maximum outstanding time until a reconnection is forced.
-func WebsocketTransportConfig(to int64, draft75 bool) TransportConfig {
-	return &websocketTransportConfig{
-		To: to,
-		Draft75: draft75,
-	}
+// Creates a new websocket transport with the given read and write timeouts.
+func NewWebsocketTransport(rtimeout, wtimeout int64) Transport {
+	return &websocketTransport{rtimeout, wtimeout}
 }
 
-// Returns the resource name
-func (tc *websocketTransportConfig) Resource() string {
+// Returns the resource name.
+func (t *websocketTransport) Resource() string {
 	return "websocket"
 }
 
-// Creates a new transport to be used with c
-func (tc *websocketTransportConfig) newTransport(conn *Conn) (ts transport) {
-	return &websocketTransport{
-		tc:   tc,
-		conn: conn,
-	}
+// Creates a new socket that can be used with a connection.
+func (t *websocketTransport) newSocket() socket {
+	return &websocketSocket{t: t}
 }
 
 // websocketTransport implements the transport interface for websockets
-type websocketTransport struct {
-	tc        *websocketTransportConfig // the transport configuration
-	ws        *websocket.Conn           // the websocket connection
-	conn      *Conn                     // owner socket.io connection
-	connected bool                      // used internally to represent the connection state
+type websocketSocket struct {
+	t         *websocketTransport // the transport configuration
+	ws        *websocket.Conn     // the websocket connection
+	connected bool                // used internally to represent the connection state
+	close     chan byte
 }
 
-// Config returns the transport configuration used
-func (t *websocketTransport) Config() TransportConfig {
-	return t.tc
+// Transport returns the transport the socket is based on.
+func (s *websocketSocket) Transport() Transport {
+	return s.t
 }
 
-// String returns the verbose representation of the transport instance
-func (t *websocketTransport) String() string {
-	return t.tc.Resource()
+// String returns the verbose representation of the socket.
+func (s *websocketSocket) String() string {
+	return s.t.Resource()
 }
 
-// Handles a http connection & request pair. It upgrades the connection
-// according either to the Draft75 or the bleeding edge specification.
-func (t *websocketTransport) handle(conn *http.Conn, req *http.Request) (err os.Error) {
-	f := func(ws *websocket.Conn) {
-		t.ws = ws
-		t.connected = true
-		t.conn.onConnect()
-
-		t.reader()
+// Accepts a http connection & request pair. It upgrades the connection and calls
+// proceed if succesfull.
+//
+// TODO: Remove the ugly channels and timeouts. They should not be needed!
+func (s *websocketSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err os.Error) {
+	if s.connected {
+		return ErrConnected
 	}
 
-	if t.tc.Draft75 {
-		go websocket.Draft75Handler(f).ServeHTTP(conn, req)
+	f := func(ws *websocket.Conn) {
+		err = nil
+		ws.SetReadTimeout(s.t.rtimeout)
+		ws.SetWriteTimeout(s.t.wtimeout)
+		s.connected = true
+		s.ws = ws
+		s.close = make(chan byte)
+		defer close(s.close)
+
+		proceed()
+
+		// must block until closed
+		<-s.close
+	}
+
+	err = errWebsocketHandshake
+	if _, ok := req.Header["Sec-Websocket-Key1"]; ok {
+		websocket.Handler(f).ServeHTTP(w, req)
 	} else {
-		go websocket.Handler(f).ServeHTTP(conn, req)
+		websocket.Draft75Handler(f).ServeHTTP(w, req)
 	}
 
 	return
 }
 
-// Reader reads data from the websocket and handles timeouts.
-// It passes the read messages to the owner's onMessage handler
-// and when it encounters an EOF or other (fatal) errors on the line,
-// it will call the Close function
-func (t *websocketTransport) reader() {
-	buf := make([]byte, 2048)
-
-	defer t.Close()
-
-	if t.tc.To > 0 {
-		t.ws.SetReadTimeout(t.tc.To)
-	}
-
-	for {
-		nr, err := t.ws.Read(buf)
-		if err != nil {
-			if err != os.E2BIG && err != os.EAGAIN {
-				return
-			} else {
-				// TODO: handle os.E2BIG properly
-				continue
-			}
-		}
-
-		if nr > 0 {
-			t.conn.onMessage(buf[0:nr])
-		}
-	}
-}
-
-// Writes p to the connection and returns the number of bytes written n
-// and an nil error if write succeeded
-func (t *websocketTransport) Write(p []byte) (n int, err os.Error) {
-	if !t.connected {
+func (s *websocketSocket) Read(p []byte) (int, os.Error) {
+	if !s.connected {
 		return 0, ErrNotConnected
 	}
 
-	n, err = t.ws.Write(p)
-	return
+	return s.ws.Read(p)
 }
 
-// Closes the connection and calls the owner's onDisconnect handler.
-func (t *websocketTransport) Close() (err os.Error) {
-	if t.connected {
-		t.connected = false
-		t.conn.onDisconnect()
-		err = t.ws.Close()
+func (s *websocketSocket) Write(p []byte) (int, os.Error) {
+	if !s.connected {
+		return 0, ErrNotConnected
 	}
 
-	return
+	return s.ws.Write(p)
+}
+
+func (s *websocketSocket) Close() os.Error {
+	if !s.connected {
+		return ErrNotConnected
+	}
+
+	s.connected = false
+	go func() { _ = s.close <- 1 }()
+	return s.ws.Close()
 }

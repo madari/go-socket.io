@@ -5,14 +5,13 @@ import (
 	"os"
 )
 
-type dummyWriter struct{}
+type nopWriter struct{}
 
-func (dw dummyWriter) Write(p []byte) (n int, err os.Error) {
+func (nw nopWriter) Write(p []byte) (n int, err os.Error) {
 	return len(p), nil
 }
 
 var (
-	DummyLogger   = log.New(dummyWriter{}, nil, "", log.Lok)
-	DefaultLogger = log.New(os.Stdout, nil, "", log.Ldate|log.Ltime)
-	DebugLogger   = log.New(os.Stdout, nil, "", log.Ldate|log.Ltime|log.Lshortfile)
+	NOPLogger     = log.New(nopWriter{}, "", 0)
+	DefaultLogger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
 )

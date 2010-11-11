@@ -2,118 +2,109 @@ package socketio
 
 import (
 	"http"
+	"bytes"
 	"os"
 	"io"
 	"net"
 	"fmt"
 )
 
-// The configuration set
-type xhrPollingTransportConfig struct {
-	To int64
+// The xhr-polling transport.
+type xhrPollingTransport struct {
+	rtimeout int64 // The period during which the client must send a message.
+	wtimeout int64 // The period during which a write must succeed.
 }
 
-// The public function to create a configuration set.
-// to is the maximum outstanding time until a reconnection is forced.
-func XHRPollingTransportConfig(to int64) TransportConfig {
-	return &xhrPollingTransportConfig{To: to}
+// Creates a new xhr-polling transport with the given read and write timeouts.
+func NewXHRPollingTransport(rtimeout, wtimeout int64) Transport {
+	return &xhrPollingTransport{rtimeout, wtimeout}
 }
 
-// Returns the resource name
-func (tc *xhrPollingTransportConfig) Resource() string {
+// Returns the resource name.
+func (t *xhrPollingTransport) Resource() string {
 	return "xhr-polling"
 }
 
-// Creates a new transport to be used with c
-func (tc *xhrPollingTransportConfig) newTransport(c *Conn) (ts transport) {
-	return &xhrPollingTransport{
-		tc:   tc,
-		conn: c,
-	}
+// Creates a new socket that can be used with a connection.
+func (t *xhrPollingTransport) newSocket() socket {
+	return &xhrPollingSocket{t: t}
 }
 
-// Implements the transport interface for XHR/long-polling transports
-type xhrPollingTransport struct {
-	tc        *xhrPollingTransportConfig
+// Implements the socket interface for xhr-polling transports.
+type xhrPollingSocket struct {
+	t         *xhrPollingTransport
 	rwc       io.ReadWriteCloser
-	conn      *Conn
+	req       *http.Request
 	connected bool
 }
 
-// String returns the verbose representation of the transport instance
-func (t *xhrPollingTransport) String() string {
-	return t.tc.Resource()
+// String returns the verbose representation of the socket.
+func (s *xhrPollingSocket) String() string {
+	return s.t.Resource()
 }
 
-// Config returns the transport configuration used
-func (t *xhrPollingTransport) Config() TransportConfig {
-	return t.tc
+// Transport returns the transport the socket is based on.
+func (s *xhrPollingSocket) Transport() Transport {
+	return s.t
 }
 
-// Handles a http connection & request pair. If the method is POST, a new message
-// is expected, otherwise a new long-polling connection is established.
-func (t *xhrPollingTransport) handle(conn *http.Conn, req *http.Request) (err os.Error) {
-	switch req.Method {
-	case "GET":
-		rwc, _, err := conn.Hijack();
-		if err == nil {
-			t.rwc = rwc
-			t.connected = true
-			go t.closer()
-
-			t.conn.onConnect()
-		}
-		return
-
-	case "POST":
-		if msg := req.FormValue("data"); msg != "" {
-			t.conn.onMessage([]byte(msg))
-		}
+// Accepts a http connection & request pair. It hijacks the connection and calls
+// proceed if succesfull.
+func (s *xhrPollingSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err os.Error) {
+	if s.connected {
+		return ErrConnected
 	}
 
+	s.req = req
+	s.rwc, _, err = w.Hijack()
+	if err == nil {
+		s.rwc.(*net.TCPConn).SetReadTimeout(s.t.rtimeout)
+		s.rwc.(*net.TCPConn).SetWriteTimeout(s.t.wtimeout)
+		s.connected = true
+		proceed()
+	}
 	return
 }
 
-// Closer tries to read from the i/o connection until an error is encountered
-// or the timeout has been reached and then closes the connection.
-func (t *xhrPollingTransport) closer() {
-	buf := make([]byte, 1)
-	rwc := t.rwc
-
-	if t.tc.To > 0 {
-		rwc.(*net.TCPConn).SetReadTimeout(t.tc.To)
-	}
-
-	for _, err := rwc.Read(buf); rwc == t.rwc; {
-		if err != nil && err != os.EAGAIN && err != os.E2BIG {
-			t.Close()
-			return
-		}
-	}
-}
-
-// Write sends a single message to the wire and closes the connection
-func (t *xhrPollingTransport) Write(p []byte) (n int, err os.Error) {
-	if !t.connected {
+func (s *xhrPollingSocket) Read(p []byte) (int, os.Error) {
+	if !s.connected {
 		return 0, ErrNotConnected
 	}
 
-	n, err = fmt.Fprintf(t.rwc,
-		"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s",
-		len(p), p)
-
-	t.Close()
-	return
+	return s.rwc.Read(p)
 }
 
-// Close tears the connection down and invokes the onDisconnect on the
-// owner connection
-func (t *xhrPollingTransport) Close() (err os.Error) {
-	if t.connected {
-		t.connected = false
-		t.conn.onDisconnect()
-		err = t.rwc.Close()
+// Write sends a single message to the wire and closes the connection.
+func (s *xhrPollingSocket) Write(p []byte) (int, os.Error) {
+	if !s.connected {
+		return 0, ErrNotConnected
 	}
 
-	return
+	defer s.Close()
+
+	buf := new(bytes.Buffer)
+
+	buf.WriteString("HTTP/1.0 200 OK\r\n")
+	buf.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+	fmt.Fprintf(buf, "Content-Length: %d\r\n", len(p))
+
+	if origin, ok := s.req.Header["Origin"]; ok {
+		fmt.Fprintf(buf, "Access-Control-Allow-Origin: %s\r\n", origin)
+		buf.WriteString("Access-Control-Allow-Credentials: true\r\n")
+	}
+
+	buf.WriteString("\r\n")
+	buf.Write(p)
+
+	nr, err := buf.WriteTo(s.rwc)
+	return int(nr), err
+}
+
+func (s *xhrPollingSocket) Close() os.Error {
+	if !s.connected {
+		return ErrNotConnected
+	}
+
+	s.connected = false
+	return s.rwc.Close()
 }

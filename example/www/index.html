@@ -57,11 +57,7 @@
 				document.getElementById('text').value = '';
 			}
 
-			var socket = new io.Socket('localhost', {
-				rememberTransport: false,
-				port: 8080,
-				transports: ['websocket', 'xhr-multipart', 'xhr-polling']
-			});
+			var socket = new io.Socket(null, { port: 8080 })
 			socket.connect();
 			socket.addEvent('message', function(data) {
 				if ('buffer' in data) {

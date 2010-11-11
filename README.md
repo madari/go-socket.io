@@ -35,18 +35,21 @@ Other utility-methods include:
 - *SocketIO.Mux*
 - *SocketIO.Broadcast*
 - *SocketIO.BroadcastExcept*
-- *SocketIO.IterConns*
 - *SocketIO.GetConn*
 
 Each new connection will be automatically assigned an unique session id and
 using those the clients can reconnect without losing messages: the server
 persists clients' pending messages (until some configurable point) if they can't
 be immediately delivered. All writes are by design asynchronous and can be made
-through *Conn.Send*.
+through `Conn.Send`.
 
-Finally, the actual format on the wire is described by a separate `Formatter`.
-The default formatter is compatible with the LearnBoost's
-[Socket.IO client](http://github.com/LearnBoost/Socket.IO).
+Finally, the actual format on the wire is described by a separate `Codec`.
+The default codec `SIOCodec` is _almost_ compatible with the LearnBoost's
+[Socket.IO client](http://github.com/LearnBoost/Socket.IO). A couple of patches
+were required due to the nature of canonicalization happening
+deep within the standard `http`-package. These patches will hopefully get merged
+into the official repository at some point. Meanwhile,
+[use this fork](http://github.com/madari/Socket.IO).
 
 ## Example: A simple chat server
 
@@ -60,9 +63,6 @@ The default formatter is compatible with the LearnBoost's
 
 	func main() {
 		sio := socketio.NewSocketIO(nil)
-		sio.Mux("/socket.io/", nil)
-
-		http.Handle("/", http.FileServer("www/", "/"))
 
 		sio.OnConnect(func(c *socketio.Conn) {
 			sio.Broadcast(struct{ announcement string }{"connected: " + c.String()})
@@ -73,15 +73,16 @@ The default formatter is compatible with the LearnBoost's
 				struct{ announcement string }{"disconnected: " + c.String()})
 		})
 
-		sio.OnMessage(func(c *socketio.Conn, msg string) {
+		sio.OnMessage(func(c *socketio.Conn, msg socketio.Message) {
 			sio.BroadcastExcept(c,
-				struct{ message []string }{[]string{c.String(), msg}})
+				struct{ message []string }{[]string{c.String(), msg.Data()}})
 		})
 
-		log.Stdout("Server started.")
+		sio.Mux("/socket.io/", nil)
+		http.Handle("/", http.FileServer("www/", "/"))
+
 		if err := http.ListenAndServe(":8080", nil); err != nil {
-			log.Stdout("ListenAndServe: %s", err.String())
-			os.Exit(1)
+			log.Exit("ListenAndServe:", err)
 		}
 	}
 
