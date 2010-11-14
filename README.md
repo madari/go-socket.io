@@ -15,6 +15,7 @@ It provides an easy way for developers to rapidly prototype with the most
 popular browser transport mechanism today:
 
 - [HTML5 WebSockets](http://dev.w3.org/html5/websockets/)
+- [HTML5 WebSockets through Adobe® Flash® Sockets](https://github.com/gimite/web-socket-js)
 - [JSONP Long Polling](http://en.wikipedia.org/wiki/JSONP#JSONP)
 - [XHR Long Polling](http://en.wikipedia.org/wiki/Comet_%28programming%29#XMLHttpRequest_long_polling)
 - [XHR Multipart Streaming](http://en.wikipedia.org/wiki/Comet_%28programming%29#XMLHttpRequest)
