@@ -18,6 +18,12 @@ func main() {
 	config.Origins = []string{"localhost:8080"}
 	sio := socketio.NewSocketIO(&config)
 	
+	go func() {
+		if err := sio.ListenAndServeFlashPolicy(":843"); err != nil {
+			log.Println(err)
+		}
+	}()
+
 	// when a client connects - send it the buffer and broadcasta an announcement
 	sio.OnConnect(func(c *socketio.Conn) {
 		mutex.Lock()
