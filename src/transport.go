@@ -25,6 +25,7 @@ var DefaultTransports = []Transport{
 	NewXHRPollingTransport(10e9, 5e9),
 	NewXHRMultipartTransport(0, 5e9),
 	NewWebsocketTransport(0, 5e9),
+	NewFlashsocketTransport(0, 5e9),
 	NewJSONPPollingTransport(0, 5e9),
 }
 
