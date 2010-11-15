@@ -90,14 +90,16 @@ func (c *Conn) Send(data interface{}) (err os.Error) {
 
 func (c *Conn) Close() os.Error {
 	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	if c.disconnected {
+		c.mutex.Unlock()
 		return ErrNotConnected
 	}
 
 	c.disconnect()
+	c.mutex.Unlock()
 
+	c.sio.onDisconnect(c)
 	return nil
 }
 
@@ -115,7 +117,6 @@ func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (er
 	}
 
 	if req.Method == "POST" {
-		c.sio.Logf("Got post headers: %v", req.Header)
 		if msg := req.FormValue("data"); msg != "" {
 			w.SetHeader("Content-Type", "text/plain")
 			w.Write(okResponse)
