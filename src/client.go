@@ -62,9 +62,9 @@ func (wc *WebsocketClient) Dial(rawurl string, origin string) (err os.Error) {
 		return os.NewError("Dial: expected exactly 1 message, but got " + strconv.Itoa(len(messages)))
 	}
 
-	if messages[0].Type() != MessageText {
+	if messages[0].Type() != MessageHandshake {
 		wc.ws.Close()
-		return os.NewError("Dial: expected messageText, but got " + messages[0].Data())
+		return os.NewError("Dial: expected handshake, but got " + messages[0].Data())
 	}
 
 	wc.sessionid = SessionID(messages[0].Data())

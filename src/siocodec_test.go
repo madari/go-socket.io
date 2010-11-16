@@ -9,13 +9,20 @@ import (
 	"os"
 )
 
-func frame(data string, json bool) string {
+func frame(data string, typ int, json bool) string {
 	utf8str := utf8.NewString(data)
-	if json {
-		return fmt.Sprintf("~m~%d~m~~j~%s", 3+utf8str.RuneCount(), data)
+	switch typ {
+	case 0:
+		return "0:0:,"
+
+	case 2, 3:
+		return fmt.Sprintf("%d:%d:%s,", typ, utf8str.RuneCount(), data)
 	}
 
-	return fmt.Sprintf("~m~%d~m~%s", utf8str.RuneCount(), data)
+	if json {
+		return fmt.Sprintf("%d:%d:j\n:%s,", typ, 3+utf8str.RuneCount(), data)
+	}
+	return fmt.Sprintf("%d:%d::%s,", typ, 1+utf8str.RuneCount(), data)
 }
 
 type encodeTest struct {
@@ -26,31 +33,31 @@ type encodeTest struct {
 var encodeTests = []encodeTest{
 	{
 		123,
-		frame("123", false),
+		frame("123", 1, false),
 	},
 	{
 		"hello, world",
-		frame("hello, world", false),
+		frame("hello, world", 1, false),
 	},
 	{
 		"öäö¥£♥",
-		frame("öäö¥£♥", false),
+		frame("öäö¥£♥", 1, false),
 	},
 	{
 		"öäö¥£♥",
-		frame("öäö¥£♥", false),
+		frame("öäö¥£♥", 1, false),
 	},
 	{
 		heartbeat(123456),
-		frame("~h~123456", false),
+		frame("123456", 2, false),
 	},
 	{
 		handshake("abcdefg"),
-		frame("abcdefg", false),
+		frame("abcdefg", 3, false),
 	},
 	{
 		true,
-		frame("true", true),
+		frame("true", 1, true),
 	},
 	{
 		struct {
@@ -62,11 +69,11 @@ var encodeTests = []encodeTest{
 			"string♥",
 			[]int{1, 2, 3, 4},
 		},
-		frame(`{"boolean":false,"str":"string♥","array":[1,2,3,4]}`, true),
+		frame(`{"boolean":false,"str":"string♥","array":[1,2,3,4]}`, 1, true),
 	},
 	{
 		[]byte("hello, world"),
-		frame("hello, world", false),
+		frame("hello, world", 1, false),
 	},
 }
 
@@ -85,27 +92,27 @@ type decodeTest struct {
 // NOTE: if you change these -> adjust the benchmarks
 var decodeTests = []decodeTest{
 	{
-		frame("~h~123", false),
-		[]decodeTestMessage{{MessageHeartbeat, "~h~123", 123}},
+		frame("123", 2, false),
+		[]decodeTestMessage{{MessageHeartbeat, "123", 123}},
 	},
 	{
-		frame("wadap!", false),
+		frame("wadap!", 1, false),
 		[]decodeTestMessage{{MessageText, "wadap!", -1}},
 	},
 	{
-		frame("♥wadap!", true),
-		[]decodeTestMessage{{MessageJSON, "~j~♥wadap!", -1}},
+		frame("♥wadap!", 1, true),
+		[]decodeTestMessage{{MessageJSON, "♥wadap!", -1}},
 	},
 	{
-		frame("hello, world!", true) + frame("~h~313", false) + frame("♥wadap!", false),
+		frame("hello, world!", 1, true) + frame("313", 2, false) + frame("♥wadap!", 1, false),
 		[]decodeTestMessage{
-			{MessageJSON, "~j~hello, world!", -1},
-			{MessageHeartbeat, "~h~313", 313},
+			{MessageJSON, "hello, world!", -1},
+			{MessageHeartbeat, "313", 313},
 			{MessageText, "♥wadap!", -1},
 		},
 	},
 	{
-		frame("ok", false) + "foobar!",
+		frame("ok", 1, false) + "foobar!",
 		nil,
 	},
 }

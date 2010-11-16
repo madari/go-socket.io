@@ -8,59 +8,84 @@ import (
 	"json"
 	"os"
 	"strconv"
-	"strings"
 	"utf8"
 )
 
 // The various delimiters used for framing in the socket.io protocol.
 const (
-	sioFrameDelim          = "~m~"
-	sioFrameDelimJSON      = "~j~"
-	sioFrameDelimHeartbeat = "~h~"
-	sioFrameDelimText      = ""
+	SIOAnnotationRealm = "r"
+	SIOAnnotationJSON  = "j"
+
+	sioMessageTypeDisconnect = 0
+	sioMessageTypeMessage    = 1
+	sioMessageTypeHeartbeat  = 2
+	sioMessageTypeHandshake  = 3
 )
 
 // SioMessage fulfills the message interface.
-type sioMessage string
+type sioMessage struct {
+	annotations map[string]string
+	typ         uint8
+	data        string
+}
 
 // MessageType checks if the message starts with sioFrameDelimJSON or
 // sioFrameDelimHeartbeat. If the prefix is something else, then the message
 // is interpreted as a basic messageText.
-func (sm sioMessage) Type() uint8 {
-	if len(sm) >= 3 {
-		switch sm[0:3] {
-		case sioFrameDelimJSON:
+func (sm *sioMessage) Type() uint8 {
+	switch sm.typ {
+	case sioMessageTypeMessage:
+		if _, ok := sm.Annotation(SIOAnnotationJSON); ok {
 			return MessageJSON
-
-		case sioFrameDelimHeartbeat:
-			return MessageHeartbeat
 		}
+
+	case sioMessageTypeDisconnect:
+		return MessageDisconnect
+
+	case sioMessageTypeHeartbeat:
+		return MessageHeartbeat
+
+	case sioMessageTypeHandshake:
+		return MessageHandshake
 	}
 
 	return MessageText
 }
 
+func (sm *sioMessage) Annotations() map[string]string {
+	return sm.annotations
+}
+
+func (sm *sioMessage) Annotation(key string) (value string, ok bool) {
+	if sm.annotations == nil {
+		return "", false
+	}
+	value, ok = sm.annotations[key]
+	return
+}
+
 // Heartbeat looks for a heartbeat value in the message. If a such value
 // can be extracted, then that value and a true is returned. Otherwise a
 // false will be returned.
-func (sm sioMessage) heartbeat() (heartbeat, bool) {
-	var hb heartbeat
-	if n, _ := fmt.Sscanf(string(sm), sioFrameDelimHeartbeat+"%d", &hb); n != 1 {
-		return -1, false
+func (sm *sioMessage) heartbeat() (heartbeat, bool) {
+	if sm.typ == sioMessageTypeHeartbeat {
+		if n, err := strconv.Atoi(sm.data); err == nil {
+			return heartbeat(n), true
+		}
 	}
 
-	return hb, true
+	return -1, false
 }
 
 // Data returns the raw message.
-func (sm sioMessage) Data() string {
-	return string(sm)
+func (sm *sioMessage) Data() string {
+	return string(sm.data)
 }
 
 // JSON returns the JSON embedded in the message, if available.
-func (sm sioMessage) JSON() (string, bool) {
+func (sm *sioMessage) JSON() (string, bool) {
 	if sm.Type() == MessageJSON {
-		return string(sm[3:]), true
+		return sm.data, true
 	}
 
 	return "", false
@@ -81,32 +106,31 @@ func (c SIOCodec) Encode(dst io.Writer, payload interface{}) (err os.Error) {
 	switch t := payload.(type) {
 	case heartbeat:
 		s := strconv.Itoa(int(t))
-		_, err = fmt.Fprintf(dst, "%s%d%s%s%d", sioFrameDelim, len(s)+len(sioFrameDelimHeartbeat), sioFrameDelim, sioFrameDelimHeartbeat, t)
+		_, err = fmt.Fprintf(dst, "%d:%d:%s,", sioMessageTypeHeartbeat, len(s), s)
 
 	case handshake:
-		_, err = fmt.Fprintf(dst, "%s%d%s%s", sioFrameDelim, len(t), sioFrameDelim, t)
+		_, err = fmt.Fprintf(dst, "%d:%d:%s,", sioMessageTypeHandshake, len(t), t)
 
 	case []byte:
 		l := utf8.RuneCount(t)
 		if l == 0 {
 			break
 		}
-		_, err = fmt.Fprintf(dst, "%s%d%s%s%s", sioFrameDelim, l+len(sioFrameDelimText), sioFrameDelim, sioFrameDelimText, t)
+		_, err = fmt.Fprintf(dst, "%d:%d::%s,", sioMessageTypeMessage, 1+l, t)
 
 	case string:
 		l := utf8.RuneCountInString(t)
 		if l == 0 {
 			break
 		}
-		_, err = fmt.Fprintf(dst, "%s%d%s%s%s", sioFrameDelim, l+len(sioFrameDelimText), sioFrameDelim, sioFrameDelimText, t)
+		_, err = fmt.Fprintf(dst, "%d:%d::%s,", sioMessageTypeMessage, 1+l, t)
 
 	case int:
 		s := strconv.Itoa(t)
 		if s == "" {
 			break
 		}
-
-		_, err = fmt.Fprintf(dst, "%s%d%s%s%s", sioFrameDelim, len(s)+len(sioFrameDelimText), sioFrameDelim, sioFrameDelimText, s)
+		_, err = fmt.Fprintf(dst, "%d:%d::%s,", sioMessageTypeMessage, 1+len(s), s)
 
 	default:
 		data, err := json.Marshal(payload)
@@ -118,53 +142,180 @@ func (c SIOCodec) Encode(dst io.Writer, payload interface{}) (err os.Error) {
 			break
 		}
 
-		_, err = fmt.Fprintf(dst, "%s%d%s%s", sioFrameDelim, utf8.RuneCount(elem.Bytes())+len(sioFrameDelimJSON), sioFrameDelim, sioFrameDelimJSON)
+		_, err = fmt.Fprintf(dst, "%d:%d:%s\n:", sioMessageTypeMessage, 2+len(SIOAnnotationJSON)+utf8.RuneCount(elem.Bytes()), SIOAnnotationJSON)
 		if err == nil {
 			_, err = elem.WriteTo(dst)
+			if err == nil {
+				_, err = dst.Write([]byte{','})
+			}
 		}
 	}
 
 	return err
 }
 
-// Decode takes a payload and tries to decode and split it into messages.
-// If an error occurs during any stage of the decoding, an error will be returned.
-// Each "frame" must have a header like this:
-// <sioFrameDelim>[length in utf8 codepoints]<sioFrameDelim>.
+const (
+	sioDecodeStateBegin = iota
+	sioDecodeStateType
+	sioDecodeStateLength
+	sioDecodeStateAnnotationKey
+	sioDecodeStateAnnotationValue
+	sioDecodeStateData
+	sioDecodeStateTrailer
+)
+
 func (c SIOCodec) Decode(payload []byte) (messages []Message, err os.Error) {
-	var frameLen, codePoint, headerLen, n int
-	// TODO: replace frames with a typed slice, so we can avoid the silly loop
-	// at the end.
-	var frames vector.StringVector
-	var frame string
-	delimLen := len(sioFrameDelim)
+	var msg *sioMessage
+	var key, value string
+	var length, index int
+	var vec vector.Vector
+	var typ uint
 	str := string(payload)
-	utf8str := utf8.NewString(str)
-	codePoints := utf8str.RuneCount()
+	state := sioDecodeStateBegin
 
-	for i, l := 0, len(str); i < l; {
-		// frameLen is in utf8 codepoints
-		if n, _ = fmt.Sscanf(str[i:], sioFrameDelim+"%d"+sioFrameDelim, &frameLen); n != 1 || frameLen < 0 {
-			return nil, ErrMalformedPayload
+L:
+	for index < len(str) {
+		c := str[index]
+
+		switch state {
+		case sioDecodeStateBegin:
+			msg = &sioMessage{}
+			state = sioDecodeStateType
+			continue
+
+		case sioDecodeStateType:
+			if c == ':' {
+				if typ, err = strconv.Atoui(str[0:index]); err != nil {
+					return nil, err
+				}
+				msg.typ = uint8(typ)
+				str = str[index+1:]
+				index = 0
+				state = sioDecodeStateLength
+				continue
+			}
+
+		case sioDecodeStateLength:
+			if c == ':' {
+				if length, err = strconv.Atoi(str[0:index]); err != nil {
+					return nil, err
+				}
+				str = str[index+1:]
+				index = 0
+
+				switch msg.typ {
+				case sioMessageTypeDisconnect:
+					state = sioDecodeStateTrailer
+
+				case sioMessageTypeHeartbeat, sioMessageTypeHandshake:
+					state = sioDecodeStateData
+
+				default:
+					state = sioDecodeStateAnnotationKey
+
+				}
+				continue
+			}
+
+		case sioDecodeStateAnnotationKey:
+			length--
+
+			switch c {
+			case ':':
+				if index == 0 {
+					state = sioDecodeStateData
+				} else {
+					key = str[0:index]
+					state = sioDecodeStateAnnotationValue
+				}
+				str = str[index+1:]
+				index = 0
+				continue
+
+			case '\n':
+				if index == 0 {
+					return nil, os.NewError("expecting key, but got '" + str + "'")
+				}
+				key = str[0:index]
+				if msg.annotations == nil {
+					msg.annotations = make(map[string]string)
+				}
+				msg.annotations[key] = ""
+				str = str[index+1:]
+				index = 0
+				continue
+			}
+
+		case sioDecodeStateAnnotationValue:
+			length--
+
+			switch c {
+			case '\n':
+				value = str[0:index]
+				if msg.annotations == nil {
+					msg.annotations = make(map[string]string)
+				}
+				msg.annotations[key] = value
+				str = str[index+1:]
+				index = 0
+
+				state = sioDecodeStateAnnotationKey
+				continue
+
+			case ':':
+				if index == 0 {
+					value = ""
+				} else {
+					value = str[0:index]
+				}
+
+				if msg.annotations == nil {
+					msg.annotations = make(map[string]string)
+				}
+				msg.annotations[key] = value
+				str = str[index+1:]
+				index = 0
+
+				state = sioDecodeStateData
+				continue
+			}
+
+		case sioDecodeStateData:
+			utf8str := utf8.NewString(str)
+			if length < 0 || length > utf8str.RuneCount() {
+				return nil, os.NewError("bad data")
+			}
+			msg.data = utf8str.Slice(0, length)
+			str = str[len(msg.data):]
+			index = 0
+
+			state = sioDecodeStateTrailer
+			continue
+
+		case sioDecodeStateTrailer:
+			if c == ',' {
+				vec.Push(msg)
+				str = str[1:]
+				index = 0
+
+				state = sioDecodeStateBegin
+				continue
+			} else {
+				return nil, os.NewError("Expecting trailer but got '" + str + "'")
+			}
 		}
 
-		headerLen = delimLen + strings.Index(str[i+delimLen:], sioFrameDelim) + delimLen
-		codePoint += headerLen
-
-		if codePoint+frameLen > codePoints {
-			return nil, ErrMalformedPayload
-		}
-
-		frame = utf8str.Slice(codePoint, codePoint+frameLen)
-		codePoint += frameLen
-		i += headerLen + len(frame)
-		frames.Push(frame)
+		index++
 	}
 
-	messages = make([]Message, frames.Len())
-	for i, f := range frames {
-		messages[i] = sioMessage(f)
+	if state != sioDecodeStateBegin {
+		return nil, os.NewError("Expected sioDecodeStateBegin, but was something else: " + strconv.Itoa(state) + ". unscanned: '" + str + "'")
 	}
 
-	return messages, nil
+	messages = make([]Message, vec.Len())
+	for i, v := range vec {
+		messages[i] = v.(*sioMessage)
+	}
+
+	return
 }
