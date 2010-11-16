@@ -5,17 +5,26 @@ const (
 	// MessageText is interpreted just as a string.
 	MessageText = iota
 
+	// MessageJSON is interpreted as a JSON encoded string.
+	MessageJSON
+
 	// MessageHeartbeat is interpreted as a heartbeat.
 	MessageHeartbeat
 
-	// MessageJSON is interpreted as a JSON encoded string.
-	MessageJSON
+	// MessageHeartbeat is interpreted as a heartbeat.
+	MessageHandshake
+
+	// MessageDisconnect is interpreted as a forced disconnection.
+	MessageDisconnect
 )
 
 // Heartbeat is a server-invoked keep-alive strategy, where
 // the server sends an integer to the client and the client
 // must respond with the same value during some short period.
 type heartbeat int
+
+// Disconnect is a message that indicates a forced disconnection.
+type disconnect int
 
 // Handshake is the first message that is going to be sent to the
 // client when it first connects. It is made of the server-generated
@@ -29,8 +38,11 @@ type handshake string
 // MessageType returns messageText, messageHeartbeat or messageJSON.
 // Data returns the raw (full) message received.
 type Message interface {
-	Type() uint8
-	Data() string
-	JSON() (string, bool)
 	heartbeat() (heartbeat, bool)
+
+	Annotations() map[string]string
+	Annotation(string) (string, bool)
+	Data() string
+	Type() uint8
+	JSON() (string, bool)
 }
