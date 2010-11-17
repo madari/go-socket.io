@@ -39,6 +39,9 @@ type Conn struct {
 	disconnected     bool             // Indicates if the connection has been disconnected.
 	wakeupFlusher    chan byte        // Used internally to wake up the flusher.
 	wakeupReader     chan byte        // Used internally to wake up the reader.
+	enc              Encoder
+	dec              Decoder
+	decBuf           bytes.Buffer
 }
 
 // NewConn creates a new connection for the sio. It generates the session id and
@@ -56,7 +59,10 @@ func newConn(sio *SocketIO) (c *Conn, err os.Error) {
 		wakeupFlusher: make(chan byte),
 		wakeupReader:  make(chan byte),
 		queue:         make(chan interface{}, sio.config.QueueLength),
+		enc:           sio.config.Codec.NewEncoder(),
 	}
+
+	c.dec = sio.config.Codec.NewDecoder(&c.decBuf)
 
 	return
 }
@@ -169,7 +175,7 @@ func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (er
 
 // Handshake sends the handshake to the socket.
 func (c *Conn) handshake() os.Error {
-	return c.sio.config.Codec.Encode(c.socket, handshake(c.sessionid))
+	return c.enc.Encode(c.socket, handshake(c.sessionid))
 }
 
 
@@ -187,7 +193,8 @@ func (c *Conn) disconnect() {
 // messages (frames) are then passed to c.sio.onMessage method and the
 // heartbeats are processed right away (TODO).
 func (c *Conn) receive(data []byte) {
-	msgs, err := c.sio.config.Codec.Decode(data[0:])
+	c.decBuf.Write(data)
+	msgs, err := c.dec.Decode()
 	if err != nil {
 		c.sio.Log("sio/conn: receive/decode:", err, c)
 		return
@@ -248,7 +255,7 @@ func (c *Conn) flusher() {
 
 	for msg = range c.queue {
 		buf.Reset()
-		err = c.sio.config.Codec.Encode(buf, msg)
+		err = c.enc.Encode(buf, msg)
 		n = 1
 
 		if err == nil {
@@ -258,7 +265,7 @@ func (c *Conn) flusher() {
 				}
 				n++
 
-				if err = c.sio.config.Codec.Encode(buf, msg); err != nil {
+				if err = c.enc.Encode(buf, msg); err != nil {
 					break
 				}
 			}

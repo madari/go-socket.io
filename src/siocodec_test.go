@@ -92,6 +92,10 @@ type decodeTest struct {
 // NOTE: if you change these -> adjust the benchmarks
 var decodeTests = []decodeTest{
 	{
+		frame("", 1, false),
+		[]decodeTestMessage{{MessageText, "", -1}},
+	},
+	{
 		frame("123", 2, false),
 		[]decodeTestMessage{{MessageHeartbeat, "123", 123}},
 	},
@@ -112,18 +116,25 @@ var decodeTests = []decodeTest{
 		},
 	},
 	{
-		frame("ok", 1, false) + "foobar!",
+		"1:3::fael!,",
 		nil,
+	},
+	{
+		frame("wadap!", 1, false),
+		[]decodeTestMessage{{MessageText, "wadap!", -1}},
 	},
 }
 
 func TestEncode(t *testing.T) {
 	codec := SIOCodec{}
+	enc := codec.NewEncoder()
 	buf := new(bytes.Buffer)
 
 	for _, test := range encodeTests {
+		t.Logf("in=%v out=%s", test.in, test.out)
+
 		buf.Reset()
-		if err := codec.Encode(buf, test.in); err != nil {
+		if err := enc.Encode(buf, test.in); err != nil {
 			t.Fatal("Encode:", err)
 		}
 		if string(buf.Bytes()) != test.out {
@@ -134,11 +145,16 @@ func TestEncode(t *testing.T) {
 
 func TestDecode(t *testing.T) {
 	codec := SIOCodec{}
+	buf := new(bytes.Buffer)
+	dec := codec.NewDecoder(buf)
 	var messages []Message
 	var err os.Error
 
 	for _, test := range decodeTests {
-		if messages, err = codec.Decode([]byte(test.in)); err != nil {
+		t.Logf("in=%s out=%v", test.in, test.out)
+
+		buf.WriteString(test.in)
+		if messages, err = dec.Decode(); err != nil {
 			if test.out == nil {
 				continue
 			}
@@ -148,7 +164,7 @@ func TestDecode(t *testing.T) {
 			t.Fatalf("Expected decode error, but got: %v, %v", messages, err)
 		}
 		if len(messages) != len(test.out) {
-			t.Fatalf("Expected %d messages, but got %d", len(messages), len(test.out))
+			t.Fatalf("Expected %d messages, but got %d", len(test.out), len(messages))
 		}
 		for i, msg := range messages {
 			if test.out[i].messageType != msg.Type() {
@@ -166,32 +182,69 @@ func TestDecode(t *testing.T) {
 	}
 }
 
+func TestDecodeStreaming(t *testing.T) {
+	var messages []Message
+	var err os.Error
+	codec := SIOCodec{}
+	buf := new(bytes.Buffer)
+	dec := codec.NewDecoder(buf)
+
+	expectNothing := func(written string) {
+		if messages, err = dec.Decode(); err != nil || messages == nil || len(messages) != 0 {
+			t.Fatalf("Partial decode failed after writing %s. err=%#v messages=%#v", written, err, messages)
+		}
+	}
+
+	buf.WriteString("5")
+	expectNothing("5")
+	buf.WriteString(":9")
+	expectNothing("5:9")
+	buf.WriteString(":12345")
+	expectNothing("5:9:12345")
+	buf.WriteString("678")
+	expectNothing("5:9:12345678")
+	buf.WriteString("9")
+	expectNothing("5:9:123456789")
+	buf.WriteString(",typefornextmessagewhichshouldbeignored")
+	messages, err = dec.Decode()
+	if err != nil {
+		t.Fatalf("Did not expect errors: %s", err)
+	}
+	if messages == nil || len(messages) != 1 {
+		t.Fatalf("Expected 1 message, got: %#v", messages)
+	}
+	if messages[0].(*sioMessage).typ != 5 || messages[0].Data() != "123456789" {
+		t.Fatalf("Expected data 123456789 and typ 5, got: %#v", messages[0])
+	}
+}
+
 func BenchmarkIntEncode(b *testing.B) {
 	codec := SIOCodec{}
+	enc := codec.NewEncoder()
 	payload := 313313
 	b.SetBytes(int64(unsafe.Sizeof(payload)))
 	w := nopWriter{}
 
 	for i := 0; i < b.N; i++ {
-		codec.Encode(w, payload)
-
+		enc.Encode(w, payload)
 	}
 }
 
 func BenchmarkStringEncode(b *testing.B) {
 	codec := SIOCodec{}
+	enc := codec.NewEncoder()
 	payload := "Hello, World!"
 	b.SetBytes(int64(len(payload)))
 	w := nopWriter{}
 
 	for i := 0; i < b.N; i++ {
-		codec.Encode(w, payload)
-
+		enc.Encode(w, payload)
 	}
 }
 
 func BenchmarkStructEncode(b *testing.B) {
 	codec := SIOCodec{}
+	enc := codec.NewEncoder()
 	payload := struct {
 		boolean bool
 		str     string
@@ -206,26 +259,32 @@ func BenchmarkStructEncode(b *testing.B) {
 	w := nopWriter{}
 
 	for i := 0; i < b.N; i++ {
-		codec.Encode(w, payload)
+		enc.Encode(w, payload)
 	}
 }
 
 func BenchmarkSingleFrameDecode(b *testing.B) {
 	codec := SIOCodec{}
+	buf := new(bytes.Buffer)
+	dec := codec.NewDecoder(buf)
 	data := []byte(decodeTests[2].in)
 	b.SetBytes(int64(len(data)))
 
 	for i := 0; i < b.N; i++ {
-		codec.Decode(data)
+		buf.Write(data)
+		dec.Decode()
 	}
 }
 
 func BenchmarkThreeFramesDecode(b *testing.B) {
 	codec := SIOCodec{}
+	buf := new(bytes.Buffer)
+	dec := codec.NewDecoder(buf)
 	data := []byte(decodeTests[3].in)
 	b.SetBytes(int64(len(data)))
 
 	for i := 0; i < b.N; i++ {
-		codec.Decode(data)
+		buf.Write(data)
+		dec.Decode()
 	}
 }

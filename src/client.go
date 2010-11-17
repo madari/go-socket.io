@@ -3,6 +3,7 @@ package socketio
 import (
 	"websocket"
 	"io"
+	"bytes"
 	"os"
 	"strconv"
 )
@@ -21,6 +22,9 @@ type Client interface {
 // WebsocketClient is a toy that implements the Client interface.
 type WebsocketClient struct {
 	connected    bool
+	enc          Encoder
+	dec          Decoder
+	decBuf       bytes.Buffer
 	codec        Codec
 	sessionid    SessionID
 	ws           *websocket.Conn
@@ -28,14 +32,15 @@ type WebsocketClient struct {
 	onMessage    func(Message)
 }
 
-func NewWebsocketClient(codec Codec) Client {
-	return &WebsocketClient{codec: codec}
+func NewWebsocketClient(codec Codec) (c *WebsocketClient) {
+	c = &WebsocketClient{enc: codec.NewEncoder()}
+	c.dec = codec.NewDecoder(&c.decBuf)
+	return
 }
 
 func (wc *WebsocketClient) Dial(rawurl string, origin string) (err os.Error) {
-	var buf []byte
-	var nr int
 	var messages []Message
+	var nr int
 
 	if wc.connected {
 		return ErrConnected
@@ -46,13 +51,14 @@ func (wc *WebsocketClient) Dial(rawurl string, origin string) (err os.Error) {
 	}
 
 	// read handshake
-	buf = make([]byte, 2048)
+	buf := make([]byte, 2048)
 	if nr, err = wc.ws.Read(buf); err != nil {
 		wc.ws.Close()
 		return os.NewError("Dial: " + err.String())
 	}
+	wc.decBuf.Write(buf[0:nr])
 
-	if messages, err = wc.codec.Decode(buf[0:nr]); err != nil {
+	if messages, err = wc.dec.Decode(); err != nil {
 		wc.ws.Close()
 		return os.NewError("Dial: " + err.String())
 	}
@@ -84,20 +90,20 @@ func (wc *WebsocketClient) SessionID() SessionID {
 }
 
 func (wc *WebsocketClient) reader() {
-	var nr int
 	var err os.Error
+	var nr int
 	var messages []Message
+	buf := make([]byte, 2048)
 
 	defer wc.Close()
 
-	buf := make([]byte, 2048)
 	for {
 		if nr, err = wc.ws.Read(buf); err != nil {
 			return
 		}
-
 		if nr > 0 {
-			if messages, err = wc.codec.Decode(buf[0:nr]); err != nil {
+			wc.decBuf.Write(buf[0:nr])
+			if messages, err = wc.dec.Decode(); err != nil {
 				return
 			}
 
@@ -126,7 +132,7 @@ func (wc *WebsocketClient) Send(payload interface{}) os.Error {
 		return ErrNotConnected
 	}
 
-	return wc.codec.Encode(wc.ws, payload)
+	return wc.enc.Encode(wc.ws, payload)
 }
 
 func (wc *WebsocketClient) Close() os.Error {

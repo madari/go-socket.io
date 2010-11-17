@@ -36,7 +36,9 @@ func echoServer(addr string, config *Config) <-chan *event {
 		events <- &event{c, eventDisconnect, nil}
 	})
 	server.OnMessage(func(c *Conn, msg Message) {
-		c.Send(msg.Data())
+		if err := c.Send(msg.Data()); err != nil {
+			fmt.Println("server echo send error: ", err)
+		}
 		events <- &event{c, eventMessage, msg}
 	})
 	server.Mux("/socket.io/", nil)
@@ -57,6 +59,7 @@ func TestWebsocket(t *testing.T) {
 	numMessages := 313
 
 	config := DefaultConfig
+	config.QueueLength = numMessages * 2
 	config.Origins = []string{serverAddr}
 	serverEvents := echoServer(serverAddr, &config)
 
@@ -92,7 +95,6 @@ func TestWebsocket(t *testing.T) {
 
 	go func() {
 		for i := 0; i < numMessages; i++ {
-			t.Logf("Client sending %d/%d", i+1, numMessages)
 			if err = client.Send(i); err != nil {
 				t.Fatal("Send:", err)
 			}
@@ -111,6 +113,8 @@ func TestWebsocket(t *testing.T) {
 			}
 			if serverEvent.msg.Data() != expect {
 				t.Fatalf("Server expected %s but received %s", expect, serverEvent.msg.Data())
+			} else {
+				t.Logf("Server received %s", serverEvent.msg.Data())
 			}
 		}
 		iook <- true
@@ -120,6 +124,7 @@ func TestWebsocket(t *testing.T) {
 		for i := 0; i < numMessages; i++ {
 			msg := <-clientMessage
 			t.Log("Client received", msg.Data())
+
 			expect := fmt.Sprintf("%d", i)
 			if msg.Data() != expect {
 				t.Fatalf("Client expected %s but received %s", expect, msg.Data())

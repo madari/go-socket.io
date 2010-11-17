@@ -96,12 +96,20 @@ func (sm *sioMessage) JSON() (string, bool) {
 // <DELIM>DATA-LENGTH<DELIM>[<OPTIONAL DELIM>]DATA.
 type SIOCodec struct{}
 
+type sioEncoder struct {
+	elem bytes.Buffer
+}
+
+func (sc SIOCodec) NewEncoder() Encoder {
+	return &sioEncoder{}
+}
+
 // Encode takes payload, encodes it and writes it to dst. Payload must be one
 // of the following: a heartbeat, a handshake, []byte, string, int or anything
 // than can be marshalled by the default json package. If payload can't be
 // encoded or the writing fails, an error will be returned.
-func (c SIOCodec) Encode(dst io.Writer, payload interface{}) (err os.Error) {
-	elem := new(bytes.Buffer)
+func (enc *sioEncoder) Encode(dst io.Writer, payload interface{}) (err os.Error) {
+	enc.elem.Reset()
 
 	switch t := payload.(type) {
 	case heartbeat:
@@ -137,14 +145,14 @@ func (c SIOCodec) Encode(dst io.Writer, payload interface{}) (err os.Error) {
 		if len(data) == 0 || err != nil {
 			break
 		}
-		err = json.Compact(elem, data)
+		err = json.Compact(&enc.elem, data)
 		if err != nil {
 			break
 		}
 
-		_, err = fmt.Fprintf(dst, "%d:%d:%s\n:", sioMessageTypeMessage, 2+len(SIOAnnotationJSON)+utf8.RuneCount(elem.Bytes()), SIOAnnotationJSON)
+		_, err = fmt.Fprintf(dst, "%d:%d:%s\n:", sioMessageTypeMessage, 2+len(SIOAnnotationJSON)+utf8.RuneCount(enc.elem.Bytes()), SIOAnnotationJSON)
 		if err == nil {
-			_, err = elem.WriteTo(dst)
+			_, err = enc.elem.WriteTo(dst)
 			if err == nil {
 				_, err = dst.Write([]byte{','})
 			}
@@ -164,157 +172,179 @@ const (
 	sioDecodeStateTrailer
 )
 
-func (c SIOCodec) Decode(payload []byte) (messages []Message, err os.Error) {
-	var msg *sioMessage
-	var key, value string
-	var length, index int
+
+type sioDecoder struct {
+	src           *bytes.Buffer
+	buf           bytes.Buffer
+	msg           *sioMessage
+	key, value    string
+	length, state int
+}
+
+func (sc SIOCodec) NewDecoder(src *bytes.Buffer) Decoder {
+	return &sioDecoder{
+		src:   src,
+		state: sioDecodeStateBegin,
+	}
+}
+
+func (dec *sioDecoder) Reset() {
+	dec.buf.Reset()
+	dec.src.Reset()
+	dec.msg = nil
+	dec.state = sioDecodeStateBegin
+	dec.key = ""
+	dec.value = ""
+	dec.length = 0
+}
+
+func (dec *sioDecoder) Decode() (messages []Message, err os.Error) {
 	var vec vector.Vector
+	var c int
 	var typ uint
-	str := string(payload)
-	state := sioDecodeStateBegin
 
 L:
-	for index < len(str) {
-		c := str[index]
+	for {
+		c, _, err = dec.src.ReadRune()
+		if err != nil {
+			break
+		}
 
-		switch state {
-		case sioDecodeStateBegin:
-			msg = &sioMessage{}
-			state = sioDecodeStateType
-			continue
+		if dec.state == sioDecodeStateBegin {
+			dec.msg = &sioMessage{}
+			dec.state = sioDecodeStateType
+			dec.buf.Reset()
+		}
 
+		switch dec.state {
 		case sioDecodeStateType:
 			if c == ':' {
-				if typ, err = strconv.Atoui(str[0:index]); err != nil {
+				if typ, err = strconv.Atoui(dec.buf.String()); err != nil {
+					dec.Reset()
 					return nil, err
 				}
-				msg.typ = uint8(typ)
-				str = str[index+1:]
-				index = 0
-				state = sioDecodeStateLength
+				dec.msg.typ = uint8(typ)
+				dec.buf.Reset()
+				dec.state = sioDecodeStateLength
 				continue
 			}
 
 		case sioDecodeStateLength:
 			if c == ':' {
-				if length, err = strconv.Atoi(str[0:index]); err != nil {
+				if dec.length, err = strconv.Atoi(dec.buf.String()); err != nil {
+					dec.Reset()
 					return nil, err
 				}
-				str = str[index+1:]
-				index = 0
+				dec.buf.Reset()
 
-				switch msg.typ {
+				switch dec.msg.typ {
+				case sioMessageTypeMessage:
+					dec.state = sioDecodeStateAnnotationKey
+
 				case sioMessageTypeDisconnect:
-					state = sioDecodeStateTrailer
-
-				case sioMessageTypeHeartbeat, sioMessageTypeHandshake:
-					state = sioDecodeStateData
+					dec.state = sioDecodeStateTrailer
 
 				default:
-					state = sioDecodeStateAnnotationKey
-
+					dec.state = sioDecodeStateData
 				}
+
 				continue
 			}
 
 		case sioDecodeStateAnnotationKey:
-			length--
+			dec.length--
 
 			switch c {
 			case ':':
-				if index == 0 {
-					state = sioDecodeStateData
+				if dec.buf.Len() == 0 {
+					dec.state = sioDecodeStateData
 				} else {
-					key = str[0:index]
-					state = sioDecodeStateAnnotationValue
+					dec.key = dec.buf.String()
+					dec.buf.Reset()
+					dec.state = sioDecodeStateAnnotationValue
 				}
-				str = str[index+1:]
-				index = 0
+
 				continue
 
 			case '\n':
-				if index == 0 {
-					return nil, os.NewError("expecting key, but got '" + str + "'")
+				if dec.buf.Len() == 0 {
+					dec.Reset()
+					return nil, os.NewError("expecting key, but got...")
 				}
-				key = str[0:index]
-				if msg.annotations == nil {
-					msg.annotations = make(map[string]string)
+				dec.key = dec.buf.String()
+				if dec.msg.annotations == nil {
+					dec.msg.annotations = make(map[string]string)
 				}
-				msg.annotations[key] = ""
-				str = str[index+1:]
-				index = 0
+
+				dec.msg.annotations[dec.key] = ""
+				dec.buf.Reset()
+
 				continue
 			}
 
 		case sioDecodeStateAnnotationValue:
-			length--
+			dec.length--
 
-			switch c {
-			case '\n':
-				value = str[0:index]
-				if msg.annotations == nil {
-					msg.annotations = make(map[string]string)
+			if c == '\n' || c == ':' {
+				dec.value = dec.buf.String()
+				if dec.msg.annotations == nil {
+					dec.msg.annotations = make(map[string]string)
 				}
-				msg.annotations[key] = value
-				str = str[index+1:]
-				index = 0
 
-				state = sioDecodeStateAnnotationKey
-				continue
+				dec.msg.annotations[dec.key] = dec.value
+				dec.buf.Reset()
 
-			case ':':
-				if index == 0 {
-					value = ""
+				if c == '\n' {
+					dec.state = sioDecodeStateAnnotationKey
 				} else {
-					value = str[0:index]
+					dec.state = sioDecodeStateData
 				}
-
-				if msg.annotations == nil {
-					msg.annotations = make(map[string]string)
-				}
-				msg.annotations[key] = value
-				str = str[index+1:]
-				index = 0
-
-				state = sioDecodeStateData
 				continue
 			}
 
 		case sioDecodeStateData:
-			utf8str := utf8.NewString(str)
-			if length < 0 || length > utf8str.RuneCount() {
-				return nil, os.NewError("bad data")
-			}
-			msg.data = utf8str.Slice(0, length)
-			str = str[len(msg.data):]
-			index = 0
+			if dec.length > 0 {
+				dec.buf.WriteRune(c)
+				dec.length--
 
-			state = sioDecodeStateTrailer
-			continue
+				utf8str := utf8.NewString(dec.src.String())
+				if utf8str.RuneCount() >= dec.length {
+					str := utf8str.Slice(0, dec.length)
+					dec.buf.WriteString(str)
+					dec.src.Next(len(str))
+					dec.length = 0
+					continue
+				} else {
+					break L
+				}
+			}
+
+			dec.msg.data = dec.buf.String()
+			dec.buf.Reset()
+			dec.state = sioDecodeStateTrailer
+			fallthrough
 
 		case sioDecodeStateTrailer:
 			if c == ',' {
-				vec.Push(msg)
-				str = str[1:]
-				index = 0
-
-				state = sioDecodeStateBegin
+				vec.Push(dec.msg)
+				dec.state = sioDecodeStateBegin
 				continue
 			} else {
-				return nil, os.NewError("Expecting trailer but got '" + str + "'")
+				dec.Reset()
+				return nil, os.NewError("Expecting trailer but got... " + string(c))
 			}
 		}
 
-		index++
-	}
-
-	if state != sioDecodeStateBegin {
-		return nil, os.NewError("Expected sioDecodeStateBegin, but was something else: " + strconv.Itoa(state) + ". unscanned: '" + str + "'")
+		dec.buf.WriteRune(c)
 	}
 
 	messages = make([]Message, vec.Len())
 	for i, v := range vec {
 		messages[i] = v.(*sioMessage)
+	}
+
+	if err == os.EOF {
+		err = nil
 	}
 
 	return

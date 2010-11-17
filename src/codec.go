@@ -3,6 +3,7 @@ package socketio
 import (
 	"io"
 	"os"
+	"bytes"
 )
 
 var (
@@ -15,6 +16,15 @@ var (
 // Decode takes a slice of bytes and decodes them into messages. If the given payload
 // can't be decoded, an ErrMalformedPayload error will be returned.
 type Codec interface {
+	NewEncoder() Encoder
+	NewDecoder(*bytes.Buffer) Decoder
+}
+
+type Decoder interface {
+	Decode() ([]Message, os.Error)
+	Reset()
+}
+
+type Encoder interface {
 	Encode(io.Writer, interface{}) os.Error
-	Decode([]byte) ([]Message, os.Error)
 }
