@@ -5,10 +5,13 @@ import (
 	"os"
 	"io"
 	"bytes"
+	"strings"
 	"json"
 	"net"
 	"fmt"
 )
+
+var htmlfileHeader = "<html><body>" + strings.Repeat(" ", 244)
 
 // The xhr-multipart transport.
 type htmlfileTransport struct {
@@ -62,11 +65,15 @@ func (s *htmlfileSocket) accept(w http.ResponseWriter, req *http.Request, procee
 		rwc.(*net.TCPConn).SetWriteTimeout(s.t.wtimeout)
 
 		buf := new(bytes.Buffer)
-		buf.WriteString("HTTP/1.0 200 OK\r\n")
+		buf.WriteString("HTTP/1.1 200 OK\r\n")
 		buf.WriteString("Content-Type: text/html\r\n")
 		buf.WriteString("Connection: keep-alive\r\n")
-		buf.WriteString("Transfer-Encoding: chunked\r\n")
+		buf.WriteString("Transfer-Encoding: chunked\r\n\r\n")
 		if _, err = buf.WriteTo(rwc); err != nil {
+			rwc.Close()
+			return
+		}
+		if _, err = fmt.Fprintf(rwc, "%x\r\n%s\r\n", len(htmlfileHeader), htmlfileHeader); err != nil {
 			rwc.Close()
 			return
 		}
@@ -95,11 +102,13 @@ func (s *htmlfileSocket) Write(p []byte) (n int, err os.Error) {
 	}
 
 	var jp []byte
+	var buf bytes.Buffer
 	if jp, err = json.Marshal(string(p)); err != nil {
 		return
 	}
 
-    return fmt.Fprintf(s.rwc, "<script>parent.s._(%s, document);</script>", jp);
+	fmt.Fprintf(&buf, "<script>parent.s._(%s, document);</script>", jp)
+	return fmt.Fprintf(s.rwc, "%x\r\n%s\r\n", buf.Len(), buf.String())
 }
 
 func (s *htmlfileSocket) Close() os.Error {
