@@ -1,13 +1,22 @@
-all: socketio
+include $(GOROOT)/src/Make.inc
 
-socketio:
-	make -C src
-
-clean:
-	make -C src clean
+TARG = socketio
+GOFILES = \
+	util.go \
+	message.go \
+	config.go \
+	session.go \
+	socketio.go \
+	connection.go \
+	codec.go \
+	siocodec.go \
+	transport.go \
+	transport_xhrpolling.go \
+	transport_xhrmultipart.go \
+	transport_htmlfile.go \
+	transport_websocket.go \
+	transport_flashsocket.go \
+	transport_jsonppolling.go \
+	client.go \
 	
-test:
-	make -C src test
-
-install:
-	make -C src install
+include $(GOROOT)/src/Make.pkg
