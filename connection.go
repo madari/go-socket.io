@@ -79,19 +79,16 @@ func (c *Conn) String() string {
 // it must be otherwise marshallable by the standard json package. If the send queue
 // has reached sio.config.QueueLength or the connection has been disconnected,
 // then the data is dropped and a an error is returned.
-func (c *Conn) Send(data interface{}) (err os.Error) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	if !c.disconnected {
-		if ok := c.queue <- data; !ok {
-			err = ErrQueueFull
+func (c *Conn) Send(data interface{}) os.Error {
+	if ok := c.queue <- data; !ok {
+		if closed(c.queue) {
+			return ErrDestroyed
 		}
-	} else {
-		err = ErrDestroyed
+
+		return ErrQueueFull
 	}
 
-	return
+	return nil
 }
 
 func (c *Conn) Close() os.Error {
@@ -228,7 +225,12 @@ func (c *Conn) keepalive() {
 		}
 
 		c.numHeartbeats++
-		c.queue <- heartbeat(c.numHeartbeats)
+		if ok := c.queue <- heartbeat(c.numHeartbeats); !ok {
+			c.sio.Log("sio/keepalive: unable to queue heartbeat. fail now. TODO: FIXME", c)
+			c.disconnect()
+			c.mutex.Unlock()
+			break
+		}
 
 		c.mutex.Unlock()
 	}
@@ -331,8 +333,8 @@ func (c *Conn) reader() {
 
 		c.mutex.Lock()
 		c.lastDisconnected = time.Nanoseconds()
+		socket.Close()
 		if c.socket == socket {
-			c.socket.Close()
 			c.online = false
 		}
 		c.mutex.Unlock()
