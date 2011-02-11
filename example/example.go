@@ -8,6 +8,18 @@ import (
 	"sync"
 )
 
+type Announcement struct {
+	Announcement string "announcement"
+}
+
+type Buffer struct {
+	Buffer []interface{} "buffer"
+}
+
+type Message struct {
+	Message []string "message"
+}
+
 // A very simple chat server
 func main() {
 	buffer := new(vector.Vector)
@@ -27,19 +39,19 @@ func main() {
 	// when a client connects - send it the buffer and broadcasta an announcement
 	sio.OnConnect(func(c *socketio.Conn) {
 		mutex.Lock()
-		c.Send(struct{ buffer []interface{} }{buffer.Copy()})
+		c.Send(Buffer{buffer.Copy()})
 		mutex.Unlock()
-		sio.Broadcast(struct{ announcement string }{"connected: " + c.String()})
+		sio.Broadcast(Announcement{"connected: " + c.String()})
 	})
 
 	// when a client disconnects - send an announcement
 	sio.OnDisconnect(func(c *socketio.Conn) {
-		sio.Broadcast(struct{ announcement string }{"disconnected: " + c.String()})
+		sio.Broadcast(Announcement{"disconnected: " + c.String()})
 	})
 
 	// when a client send a message - broadcast and store it
 	sio.OnMessage(func(c *socketio.Conn, msg socketio.Message) {
-		payload := struct{ message []string }{[]string{c.String(), msg.Data()}}
+		payload := Message{[]string{c.String(), msg.Data()}}
 		mutex.Lock()
 		buffer.Push(payload)
 		mutex.Unlock()
@@ -52,6 +64,6 @@ func main() {
 	http.Handle("/", http.FileServer("www/", "/"))
 
 	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Exit("ListenAndServe:", err)
+		log.Fatal("ListenAndServe:", err)
 	}
 }
