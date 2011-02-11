@@ -103,6 +103,12 @@ func (s *websocketSocket) Close() os.Error {
 	}
 
 	s.connected = false
-	go func() { _ = s.close <- 1 }()
+	go func() {
+		select {
+		case s.close <- 1:
+		default:
+		}
+	}()
+
 	return s.ws.Close()
 }
