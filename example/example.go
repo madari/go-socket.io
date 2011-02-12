@@ -60,10 +60,10 @@ func main() {
 
 	log.Println("Server starting. Tune your browser to http://localhost:8080/")
 
-	sio.Mux("/socket.io/", nil)
-	http.Handle("/", http.FileServer("www/", "/"))
+	mux := sio.ServeMux()
+	mux.Handle("/", http.FileServer("www/", "/"))
 
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	if err := http.ListenAndServe(":8080", mux); err != nil {
 		log.Fatal("ListenAndServe:", err)
 	}
 }

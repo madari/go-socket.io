@@ -8,6 +8,7 @@ import (
 	"json"
 	"os"
 	"strconv"
+	"strings"
 	"utf8"
 )
 
@@ -15,6 +16,10 @@ import (
 const (
 	SIOAnnotationRealm = "r"
 	SIOAnnotationJSON  = "j"
+
+	sioFrameDelim          = "~m~"
+	sioFrameDelimJSON      = "~j~"
+	sioFrameDelimHeartbeat = "~h~"
 
 	sioMessageTypeDisconnect = 0
 	sioMessageTypeMessage    = 1
@@ -114,31 +119,31 @@ func (enc *sioEncoder) Encode(dst io.Writer, payload interface{}) (err os.Error)
 	switch t := payload.(type) {
 	case heartbeat:
 		s := strconv.Itoa(int(t))
-		_, err = fmt.Fprintf(dst, "%d:%d:%s,", sioMessageTypeHeartbeat, len(s), s)
+		_, err = fmt.Fprintf(dst, "%s%d%s%s%s", sioFrameDelim, len(s)+len(sioFrameDelimHeartbeat), sioFrameDelim, sioFrameDelimHeartbeat, s)
 
 	case handshake:
-		_, err = fmt.Fprintf(dst, "%d:%d:%s,", sioMessageTypeHandshake, len(t), t)
+		_, err = fmt.Fprintf(dst, "%s%d%s%s", sioFrameDelim, len(t), sioFrameDelim, t)
 
 	case []byte:
 		l := utf8.RuneCount(t)
 		if l == 0 {
 			break
 		}
-		_, err = fmt.Fprintf(dst, "%d:%d::%s,", sioMessageTypeMessage, 1+l, t)
+		_, err = fmt.Fprintf(dst, "%s%d%s%s", sioFrameDelim, l, sioFrameDelim, t)
 
 	case string:
 		l := utf8.RuneCountInString(t)
 		if l == 0 {
 			break
 		}
-		_, err = fmt.Fprintf(dst, "%d:%d::%s,", sioMessageTypeMessage, 1+l, t)
+		_, err = fmt.Fprintf(dst, "%s%d%s%s", sioFrameDelim, l, sioFrameDelim, t)
 
 	case int:
 		s := strconv.Itoa(t)
 		if s == "" {
 			break
 		}
-		_, err = fmt.Fprintf(dst, "%d:%d::%s,", sioMessageTypeMessage, 1+len(s), s)
+		_, err = fmt.Fprintf(dst, "%s%d%s%s", sioFrameDelim, len(s), sioFrameDelim, s)
 
 	default:
 		data, err := json.Marshal(payload)
@@ -150,12 +155,9 @@ func (enc *sioEncoder) Encode(dst io.Writer, payload interface{}) (err os.Error)
 			break
 		}
 
-		_, err = fmt.Fprintf(dst, "%d:%d:%s\n:", sioMessageTypeMessage, 2+len(SIOAnnotationJSON)+utf8.RuneCount(enc.elem.Bytes()), SIOAnnotationJSON)
+		_, err = fmt.Fprintf(dst, "%s%d%s%s", sioFrameDelim, utf8.RuneCount(enc.elem.Bytes())+len(sioFrameDelimJSON), sioFrameDelim, sioFrameDelimJSON)
 		if err == nil {
 			_, err = enc.elem.WriteTo(dst)
-			if err == nil {
-				_, err = dst.Write([]byte{','})
-			}
 		}
 	}
 
@@ -164,12 +166,11 @@ func (enc *sioEncoder) Encode(dst io.Writer, payload interface{}) (err os.Error)
 
 const (
 	sioDecodeStateBegin = iota
-	sioDecodeStateType
+	sioDecodeStateHeaderBegin
 	sioDecodeStateLength
-	sioDecodeStateAnnotationKey
-	sioDecodeStateAnnotationValue
+	sioDecodeStateHeaderEnd
 	sioDecodeStateData
-	sioDecodeStateTrailer
+	sioDecodeStateEnd
 )
 
 
@@ -201,106 +202,66 @@ func (dec *sioDecoder) Reset() {
 func (dec *sioDecoder) Decode() (messages []Message, err os.Error) {
 	var vec vector.Vector
 	var c int
-	var typ uint
 
 L:
 	for {
+		if dec.state == sioDecodeStateBegin {
+			dec.msg = &sioMessage{}
+			dec.state = sioDecodeStateHeaderBegin
+			dec.buf.Reset()
+		}
+
 		c, _, err = dec.src.ReadRune()
 		if err != nil {
 			break
 		}
 
-		if dec.state == sioDecodeStateBegin {
-			dec.msg = &sioMessage{}
-			dec.state = sioDecodeStateType
-			dec.buf.Reset()
-		}
-
 		switch dec.state {
-		case sioDecodeStateType:
-			if c == ':' {
-				if typ, err = strconv.Atoui(dec.buf.String()); err != nil {
+		case sioDecodeStateHeaderBegin:
+			dec.buf.WriteRune(c)
+			if dec.buf.Len() == len(sioFrameDelim) {
+				if dec.buf.String() != sioFrameDelim {
 					dec.Reset()
-					return nil, err
+					return nil, os.NewError("Malformed header")
 				}
-				dec.msg.typ = uint8(typ)
-				dec.buf.Reset()
+
 				dec.state = sioDecodeStateLength
-				continue
+				dec.buf.Reset()
 			}
+			continue
 
 		case sioDecodeStateLength:
-			if c == ':' {
-				if dec.length, err = strconv.Atoi(dec.buf.String()); err != nil {
-					dec.Reset()
-					return nil, err
-				}
-				dec.buf.Reset()
-
-				switch dec.msg.typ {
-				case sioMessageTypeMessage:
-					dec.state = sioDecodeStateAnnotationKey
-
-				case sioMessageTypeDisconnect:
-					dec.state = sioDecodeStateTrailer
-
-				default:
-					dec.state = sioDecodeStateData
-				}
-
+			if c >= '0' && c <= '9' {
+				dec.buf.WriteRune(c)
 				continue
 			}
 
-		case sioDecodeStateAnnotationKey:
-			dec.length--
+			if dec.length, err = strconv.Atoi(dec.buf.String()); err != nil {
+				dec.Reset()
+				return nil, err
+			}
 
-			switch c {
-			case ':':
-				if dec.buf.Len() == 0 {
-					dec.state = sioDecodeStateData
-				} else {
-					dec.key = dec.buf.String()
-					dec.buf.Reset()
-					dec.state = sioDecodeStateAnnotationValue
-				}
+			dec.buf.Reset()
+			dec.state = sioDecodeStateHeaderEnd
+			fallthrough
 
-				continue
-
-			case '\n':
-				if dec.buf.Len() == 0 {
-					dec.Reset()
-					return nil, os.NewError("expecting key, but got...")
-				}
-				dec.key = dec.buf.String()
-				if dec.msg.annotations == nil {
-					dec.msg.annotations = make(map[string]string)
-				}
-
-				dec.msg.annotations[dec.key] = ""
-				dec.buf.Reset()
-
+		case sioDecodeStateHeaderEnd:
+			dec.buf.WriteRune(c)
+			if dec.buf.Len() < len(sioFrameDelim) {
 				continue
 			}
 
-		case sioDecodeStateAnnotationValue:
-			dec.length--
+			if dec.buf.String() != sioFrameDelim {
+				dec.Reset()
+				return nil, os.NewError("Malformed header")
+			}
 
-			if c == '\n' || c == ':' {
-				dec.value = dec.buf.String()
-				if dec.msg.annotations == nil {
-					dec.msg.annotations = make(map[string]string)
-				}
-
-				dec.msg.annotations[dec.key] = dec.value
-				dec.buf.Reset()
-
-				if c == '\n' {
-					dec.state = sioDecodeStateAnnotationKey
-				} else {
-					dec.state = sioDecodeStateData
-				}
+			dec.state = sioDecodeStateData
+			dec.buf.Reset()
+			if dec.length > 0 {
 				continue
 			}
+			fallthrough
 
 		case sioDecodeStateData:
 			if dec.length > 0 {
@@ -308,31 +269,34 @@ L:
 				dec.length--
 
 				utf8str := utf8.NewString(dec.src.String())
+
 				if utf8str.RuneCount() >= dec.length {
 					str := utf8str.Slice(0, dec.length)
 					dec.buf.WriteString(str)
 					dec.src.Next(len(str))
 					dec.length = 0
-					continue
 				} else {
 					break L
 				}
 			}
 
 			dec.msg.data = dec.buf.String()
-			dec.buf.Reset()
-			dec.state = sioDecodeStateTrailer
-			fallthrough
+			dec.msg.typ = sioMessageTypeMessage
 
-		case sioDecodeStateTrailer:
-			if c == ',' {
-				vec.Push(dec.msg)
-				dec.state = sioDecodeStateBegin
-				continue
-			} else {
-				dec.Reset()
-				return nil, os.NewError("Expecting trailer but got... " + string(c))
+			if strings.HasPrefix(dec.msg.data, sioFrameDelimJSON) {
+				dec.msg.annotations = make(map[string]string)
+				dec.msg.annotations[SIOAnnotationJSON] = ""
+				dec.msg.data = dec.msg.data[len(sioFrameDelimJSON):]
+			} else if strings.HasPrefix(dec.msg.data, sioFrameDelimHeartbeat) {
+				dec.msg.typ = sioMessageTypeHeartbeat
+				dec.msg.data = dec.msg.data[len(sioFrameDelimHeartbeat):]
 			}
+
+			vec.Push(dec.msg)
+
+			dec.state = sioDecodeStateBegin
+			dec.buf.Reset()
+			continue
 		}
 
 		dec.buf.WriteRune(c)

@@ -3,3 +3,4 @@ example/example
 *.a
 *.[568vq]
 [568vq].out
+_testmain.go

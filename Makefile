@@ -3,6 +3,7 @@ include $(GOROOT)/src/Make.inc
 TARG = socketio
 GOFILES = \
 	util.go \
+	servemux.go \
 	message.go \
 	config.go \
 	session.go \
@@ -10,6 +11,7 @@ GOFILES = \
 	connection.go \
 	codec.go \
 	codec_sio.go \
+	codec_siostreaming.go \
 	transport.go \
 	transport_xhrpolling.go \
 	transport_xhrmultipart.go \

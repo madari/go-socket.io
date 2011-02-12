@@ -32,6 +32,9 @@ type Config struct {
 	// Codec to use.
 	Codec Codec
 
+	// The resource to bind to, e.g. /socket.io/
+	Resource string
+
 	// Logger to use.
 	Logger *log.Logger
 }
@@ -45,5 +48,6 @@ var DefaultConfig = Config{
 	Origins:           nil,
 	Transports:        DefaultTransports,
 	Codec:             SIOCodec{},
+	Resource:          "/socket.io/",
 	Logger:            DefaultLogger,
 }

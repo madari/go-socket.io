@@ -14,10 +14,11 @@ import (
 // SocketIO handles transport abstraction and provide the user
 // a handfull of callbacks to observe different events.
 type SocketIO struct {
-	sessions     map[SessionID]*Conn // Holds the outstanding sessions.
-	sessionsLock *sync.RWMutex       // Protects the sessions.
-	config       Config              // Holds the configuration values.
-	muxed        bool                // Is the server muxed already.
+	sessions        map[SessionID]*Conn // Holds the outstanding sessions.
+	sessionsLock    *sync.RWMutex       // Protects the sessions.
+	config          Config              // Holds the configuration values.
+	serveMux        *ServeMux
+	transportLookup map[string]Transport
 
 	// The callbacks set by the user
 	callbacks struct {
@@ -36,11 +37,20 @@ func NewSocketIO(config *Config) *SocketIO {
 		config = &DefaultConfig
 	}
 
-	return &SocketIO{
-		config:       *config,
-		sessions:     make(map[SessionID]*Conn),
-		sessionsLock: new(sync.RWMutex),
+	sio := &SocketIO{
+		config:          *config,
+		sessions:        make(map[SessionID]*Conn),
+		sessionsLock:    new(sync.RWMutex),
+		transportLookup: make(map[string]Transport),
 	}
+
+	for _, t := range sio.config.Transports {
+		sio.transportLookup[t.Resource()] = t
+	}
+
+	sio.serveMux = NewServeMux(sio)
+
+	return sio
 }
 
 // Broadcast schedules data to be sent to each connection.
@@ -74,40 +84,13 @@ func (sio *SocketIO) GetConn(sessionid SessionID) (c *Conn) {
 // The resource must end with a slash and if the mux is nil, the
 // http.DefaultServeMux is used. It registers handlers for URLs like:
 // <resource><t.resource>[/], e.g. /socket.io/websocket && socket.io/websocket/.
-func (sio *SocketIO) Mux(resource string, mux *http.ServeMux) os.Error {
-	if mux == nil {
-		mux = http.DefaultServeMux
-	}
-
-	if sio.muxed {
-		return os.NewError("Mux: already muxed")
-	}
-
-	if resource == "" || resource[len(resource)-1] != '/' {
-		return os.NewError("Mux: resource must end with a slash")
-	}
-
-	for _, t := range sio.config.Transports {
-		tt := t
-		tresource := resource + tt.Resource()
-		mux.HandleFunc(tresource+"/", func(w http.ResponseWriter, req *http.Request) {
-			sio.handle(tt, w, req)
-		})
-		mux.HandleFunc(tresource, func(w http.ResponseWriter, req *http.Request) {
-			sio.handle(tt, w, req)
-		})
-	}
-
-	sio.muxed = true
-	return nil
+func (sio *SocketIO) ServeMux() *ServeMux {
+	return sio.serveMux
 }
 
 // OnConnect sets f to be invoked when a new session is established. It passes
 // the established connection as an argument to the callback.
 func (sio *SocketIO) OnConnect(f func(*Conn)) os.Error {
-	if sio.muxed {
-		return os.NewError("OnConnect: already muxed")
-	}
 	sio.callbacks.onConnect = f
 	return nil
 }
@@ -116,9 +99,6 @@ func (sio *SocketIO) OnConnect(f func(*Conn)) os.Error {
 // the established connection as an argument to the callback. After disconnection
 // the connection is considered to be destroyed, and it should not be used anymore.
 func (sio *SocketIO) OnDisconnect(f func(*Conn)) os.Error {
-	if sio.muxed {
-		return os.NewError("OnDisconnect: already muxed")
-	}
 	sio.callbacks.onDisconnect = f
 	return nil
 }
@@ -127,9 +107,6 @@ func (sio *SocketIO) OnDisconnect(f func(*Conn)) os.Error {
 // the established connection along with the received message as arguments
 // to the callback.
 func (sio *SocketIO) OnMessage(f func(*Conn, Message)) os.Error {
-	if sio.muxed {
-		return os.NewError("OnMessage: already muxed")
-	}
 	sio.callbacks.onMessage = f
 	return nil
 }
@@ -195,21 +172,14 @@ func (sio *SocketIO) handle(t Transport, w http.ResponseWriter, req *http.Reques
 		parts = strings.Split(req.URL.Path[i:pathLen], "/", -1)
 	}
 
-	switch len(parts) {
-	case 1:
-		// only resource was present, so create a new connection
+	if len(parts) < 2 || parts[1] == "" {
 		c, err = newConn(sio)
 		if err != nil {
 			sio.Log("sio/handle: unable to create a new connection:", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-
-	case 2:
-		fallthrough
-
-	case 3:
-		// session id was present
+	} else {
 		c = sio.GetConn(SessionID(parts[1]))
 	}
 

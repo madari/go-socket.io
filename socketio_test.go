@@ -41,10 +41,8 @@ func echoServer(addr string, config *Config) <-chan *event {
 		}
 		events <- &event{c, eventMessage, msg}
 	})
-	server.Mux("/socket.io/", nil)
-
 	go func() {
-		http.ListenAndServe(addr, nil)
+		http.ListenAndServe(addr, server.ServeMux())
 		events <- &event{nil, eventCrash, nil}
 	}()
 
@@ -60,10 +58,11 @@ func TestWebsocket(t *testing.T) {
 
 	config := DefaultConfig
 	config.QueueLength = numMessages * 2
+	config.Codec = SIOStreamingCodec{}
 	config.Origins = []string{serverAddr}
 	serverEvents := echoServer(serverAddr, &config)
 
-	client := NewWebsocketClient(SIOCodec{})
+	client := NewWebsocketClient(SIOStreamingCodec{})
 	client.OnMessage(func(msg Message) {
 		clientMessage <- msg
 	})
