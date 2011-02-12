@@ -79,13 +79,17 @@ func (c *Conn) String() string {
 // it must be otherwise marshallable by the standard json package. If the send queue
 // has reached sio.config.QueueLength or the connection has been disconnected,
 // then the data is dropped and a an error is returned.
-func (c *Conn) Send(data interface{}) os.Error {
+func (c *Conn) Send(data interface{}) (err os.Error) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if c.disconnected {
+		return ErrDestroyed
+	}
+
 	select {
 	case c.queue <- data:
 	default:
-		if closed(c.queue) {
-			return ErrDestroyed
-		}
 		return ErrQueueFull
 	}
 
