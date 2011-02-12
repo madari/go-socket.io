@@ -17,6 +17,10 @@ popular browser transport mechanism today:
 - [XHR Multipart Streaming](http://en.wikipedia.org/wiki/Comet_%28programming%29#XMLHttpRequest)
 - [ActiveX HTMLFile](http://cometdaily.com/2007/10/25/http-streaming-and-internet-explorer/)
 
+## Demo
+
+[The Paper Experiment](http://wall-r.com/paper)
+
 ## Crash course
 
 The `socketio` package works hand-in-hand with the standard `http` package (by
