@@ -1,3 +1,0 @@
-[submodule "example/www/vendor/socket.io-client"]
-	path = example/www/vendor/socket.io-client
-	url = http://github.com/madari/Socket.IO.git
