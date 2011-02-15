@@ -15,10 +15,15 @@ import (
 // a handfull of callbacks to observe different events.
 type SocketIO struct {
 	sessions        map[SessionID]*Conn // Holds the outstanding sessions.
-	sessionsLock    *sync.RWMutex       // Protects the sessions.
+	mutex           *sync.RWMutex       // Protects the sessions.
 	config          Config              // Holds the configuration values.
 	serveMux        *ServeMux
 	transportLookup map[string]Transport
+
+	totalPacketsSent     int64
+	totalPacketsReceived int64
+	totalSessions        int64
+	totalRequests        int64
 
 	// The callbacks set by the user
 	callbacks struct {
@@ -40,7 +45,7 @@ func NewSocketIO(config *Config) *SocketIO {
 	sio := &SocketIO{
 		config:          *config,
 		sessions:        make(map[SessionID]*Conn),
-		sessionsLock:    new(sync.RWMutex),
+		mutex:           new(sync.RWMutex),
 		transportLookup: make(map[string]Transport),
 	}
 
@@ -62,8 +67,8 @@ func (sio *SocketIO) Broadcast(data interface{}) {
 // c. It does not care about the type of data, but it must marshallable
 // by the standard json-package.
 func (sio *SocketIO) BroadcastExcept(c *Conn, data interface{}) {
-	sio.sessionsLock.RLock()
-	defer sio.sessionsLock.RUnlock()
+	sio.mutex.RLock()
+	defer sio.mutex.RUnlock()
 
 	for _, v := range sio.sessions {
 		if v != c {
@@ -74,9 +79,9 @@ func (sio *SocketIO) BroadcastExcept(c *Conn, data interface{}) {
 
 // GetConn digs for a session with sessionid and returns it.
 func (sio *SocketIO) GetConn(sessionid SessionID) (c *Conn) {
-	sio.sessionsLock.RLock()
+	sio.mutex.RLock()
 	c = sio.sessions[sessionid]
-	sio.sessionsLock.RUnlock()
+	sio.mutex.RUnlock()
 	return
 }
 
@@ -136,6 +141,10 @@ func (sio *SocketIO) handle(t Transport, w http.ResponseWriter, req *http.Reques
 	var parts []string
 	var c *Conn
 	var err os.Error
+
+	sio.mutex.Lock()
+	sio.totalRequests++
+	sio.mutex.Unlock()
 
 	if origin, ok := req.Header["Origin"]; ok {
 		if _, ok = sio.verifyOrigin(origin); !ok {
@@ -201,9 +210,10 @@ func (sio *SocketIO) handle(t Transport, w http.ResponseWriter, req *http.Reques
 // established succesfully. The establised connection is passed as an
 // argument. It stores the connection and calls the user's OnConnect callback.
 func (sio *SocketIO) onConnect(c *Conn) {
-	sio.sessionsLock.Lock()
+	sio.mutex.Lock()
 	sio.sessions[c.sessionid] = c
-	sio.sessionsLock.Unlock()
+	sio.totalSessions++
+	sio.mutex.Unlock()
 
 	if sio.callbacks.onConnect != nil {
 		sio.callbacks.onConnect(c)
@@ -213,9 +223,11 @@ func (sio *SocketIO) onConnect(c *Conn) {
 // OnDisconnect is invoked by a connection when the connection is considered
 // to be lost. It removes the connection and calls the user's OnDisconnect callback.
 func (sio *SocketIO) onDisconnect(c *Conn) {
-	sio.sessionsLock.Lock()
+	sio.mutex.Lock()
 	sio.sessions[c.sessionid] = nil, false
-	sio.sessionsLock.Unlock()
+	sio.totalPacketsSent += int64(c.numPacketsSent)
+	sio.totalPacketsReceived += int64(c.numPacketsReceived)
+	sio.mutex.Unlock()
 
 	if sio.callbacks.onDisconnect != nil {
 		sio.callbacks.onDisconnect(c)

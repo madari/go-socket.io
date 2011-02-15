@@ -23,25 +23,29 @@ var (
 // Conn represents a single session and handles its handshaking,
 // message buffering and reconnections.
 type Conn struct {
-	mutex            sync.Mutex
-	socket           socket    // The i/o connection that abstract the transport.
-	sio              *SocketIO // The server.
-	sessionid        SessionID
-	online           bool
-	lastConnected    int64
-	lastDisconnected int64
-	lastHeartbeat    heartbeat
-	numHeartbeats    int
-	ticker           *time.Ticker
-	queue            chan interface{} // Buffers the outgoing messages.
-	numConns         int              // Total number of reconnects.
-	handshaked       bool             // Indicates if the handshake has been sent.
-	disconnected     bool             // Indicates if the connection has been disconnected.
-	wakeupFlusher    chan byte        // Used internally to wake up the flusher.
-	wakeupReader     chan byte        // Used internally to wake up the reader.
-	enc              Encoder
-	dec              Decoder
-	decBuf           bytes.Buffer
+	mutex              sync.Mutex
+	socket             socket    // The i/o connection that abstract the transport.
+	sio                *SocketIO // The server.
+	sessionid          SessionID
+	online             bool
+	raddr              string
+	ua                 string
+	firstConnected     int64
+	lastDisconnected   int64
+	lastHeartbeat      heartbeat
+	numHeartbeats      int
+	ticker             *time.Ticker
+	queue              chan interface{} // Buffers the outgoing messages.
+	numConns           int              // Total number of reconnects.
+	handshaked         bool             // Indicates if the handshake has been sent.
+	disconnected       bool             // Indicates if the connection has been disconnected.
+	wakeupFlusher      chan byte        // Used internally to wake up the flusher.
+	wakeupReader       chan byte        // Used internally to wake up the reader.
+	enc                Encoder
+	dec                Decoder
+	decBuf             bytes.Buffer
+	numPacketsSent     int
+	numPacketsReceived int
 }
 
 // NewConn creates a new connection for the sio. It generates the session id and
@@ -72,6 +76,18 @@ func newConn(sio *SocketIO) (c *Conn, err os.Error) {
 // fmt.Stringer interface.
 func (c *Conn) String() string {
 	return fmt.Sprintf("%v[%v]", c.sessionid, c.socket)
+}
+
+func (c *Conn) remoteAddr() string {
+	return c.raddr
+}
+
+func (c *Conn) userAgent() string {
+	return c.ua
+}
+
+func (c *Conn) transport() Transport {
+	return c.socket.Transport()
 }
 
 // Send queues data for a delivery. It is totally content agnostic with one exception:
@@ -144,7 +160,7 @@ func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (er
 		}
 		c.socket = s
 		c.online = true
-		c.lastConnected = time.Nanoseconds()
+		c.raddr = w.RemoteAddr()
 
 		if !c.handshaked {
 			// the connection has not been handshaked yet.
@@ -155,6 +171,8 @@ func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (er
 			}
 
 			c.handshaked = true
+			c.firstConnected = time.Seconds()
+			c.ua = req.Header["User-Agent"]
 
 			go c.keepalive()
 			go c.flusher()
@@ -202,12 +220,12 @@ func (c *Conn) disconnect() {
 // It uses c.sio.codec to decode the data. The received non-heartbeat
 // messages (frames) are then passed to c.sio.onMessage method and the
 // heartbeats are processed right away (TODO).
-func (c *Conn) receive(data []byte) {
+func (c *Conn) receive(data []byte) int {
 	c.decBuf.Write(data)
 	msgs, err := c.dec.Decode()
 	if err != nil {
 		c.sio.Log("sio/conn: receive/decode:", err, c)
-		return
+		return 0
 	}
 
 	for _, m := range msgs {
@@ -217,6 +235,8 @@ func (c *Conn) receive(data []byte) {
 			c.sio.onMessage(c, m)
 		}
 	}
+
+	return len(msgs)
 }
 
 func (c *Conn) keepalive() {
@@ -316,6 +336,10 @@ func (c *Conn) flusher() {
 				return
 			}
 		}
+
+		c.mutex.Lock()
+		c.numPacketsSent += n
+		c.mutex.Unlock()
 	}
 }
 
@@ -347,7 +371,10 @@ func (c *Conn) reader() {
 			} else if nr < 0 {
 				break
 			} else if nr > 0 {
-				c.receive(buf[0:nr])
+				n := c.receive(buf[0:nr])
+				c.mutex.Lock()
+				c.numPacketsReceived += n
+				c.mutex.Unlock()
 			}
 		}
 

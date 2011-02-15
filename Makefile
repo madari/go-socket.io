@@ -4,6 +4,7 @@ TARG = socketio
 GOFILES = \
 	util.go \
 	servemux.go \
+	rpc.go \
 	message.go \
 	config.go \
 	session.go \
