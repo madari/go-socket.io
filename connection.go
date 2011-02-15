@@ -118,24 +118,28 @@ func (c *Conn) Close() os.Error {
 // reconnected). Finally, handle will wake up the reader and the flusher.
 func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (err os.Error) {
 	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	if c.disconnected {
+		c.mutex.Unlock()
 		return ErrNotConnected
 	}
 
 	if req.Method == "POST" {
+		c.mutex.Unlock()
+
 		if msg := req.FormValue("data"); msg != "" {
 			w.SetHeader("Content-Type", "text/plain")
 			w.Write(okResponse)
 			c.receive([]byte(msg))
 		} else {
 			c.sio.Log("sio/conn: handle: POST missing data-field:", c)
-			return errMissingPostData
+			err = errMissingPostData
 		}
 
 		return
 	}
+
+	didHandshake := false
 
 	s := t.newSocket()
 	err = s.accept(w, req, func() {
@@ -155,12 +159,11 @@ func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (er
 			}
 
 			c.handshaked = true
+			didHandshake = true
 
 			go c.keepalive()
 			go c.flusher()
 			go c.reader()
-			defer c.sio.onConnect(c)
-			defer c.mutex.Unlock()
 
 			c.sio.Log("sio/conn: connected:", c)
 		} else {
@@ -178,7 +181,16 @@ func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (er
 		case c.wakeupReader <- 1:
 		default:
 		}
+
+		if didHandshake {
+			c.mutex.Unlock()
+			c.sio.onConnect(c)
+		}
 	})
+
+	if !didHandshake {
+		c.mutex.Unlock()
+	}
 
 	return
 }
