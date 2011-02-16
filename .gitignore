@@ -1,4 +1,5 @@
 example/example
+cli/cli
 *.o
 *.a
 *.[568vq]
