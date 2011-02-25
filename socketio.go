@@ -137,8 +137,8 @@ func (sio *SocketIO) handle(t Transport, w http.ResponseWriter, req *http.Reques
 	var c *Conn
 	var err os.Error
 
-	if origin, ok := req.Header["Origin"]; ok {
-		if _, ok = sio.verifyOrigin(origin); !ok {
+	if origin := req.Header.Get("Origin"); origin != "" {
+		if _, ok := sio.verifyOrigin(origin); !ok {
 			sio.Log("sio/handle: unauthorized origin:", origin)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
