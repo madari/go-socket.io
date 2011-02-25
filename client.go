@@ -32,9 +32,9 @@ type WebsocketClient struct {
 	onMessage    func(Message)
 }
 
-func NewWebsocketClient(codec Codec) (c *WebsocketClient) {
-	c = &WebsocketClient{enc: codec.NewEncoder()}
-	c.dec = codec.NewDecoder(&c.decBuf)
+func NewWebsocketClient(codec Codec) (wc *WebsocketClient) {
+	wc = &WebsocketClient{enc: codec.NewEncoder(), codec: codec}
+	wc.dec = codec.NewDecoder(&wc.decBuf)
 	return
 }
 
@@ -68,9 +68,15 @@ func (wc *WebsocketClient) Dial(rawurl string, origin string) (err os.Error) {
 		return os.NewError("Dial: expected exactly 1 message, but got " + strconv.Itoa(len(messages)))
 	}
 
-	if messages[0].Type() != MessageHandshake {
-		wc.ws.Close()
-		return os.NewError("Dial: expected handshake, but got " + messages[0].Data())
+	// TODO: Fix me: The original Socket.IO codec does not have a special encoding for handshake
+	// so we should just assume that the first message is the handshake.
+	// The old codec should be gone pretty soon (waiting for 0.7 release) so this might suffice
+	// until then.
+	if _, ok := wc.codec.(SIOCodec); !ok {
+		if messages[0].Type() != MessageHandshake {
+			wc.ws.Close()
+			return os.NewError("Dial: expected handshake, but got " + messages[0].Data())
+		}
 	}
 
 	wc.sessionid = SessionID(messages[0].Data())
