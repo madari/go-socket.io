@@ -176,7 +176,7 @@ func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (er
 
 			c.handshaked = true
 			c.firstConnected = time.Seconds()
-			c.ua = req.Header["User-Agent"]
+			c.ua = req.Header.Get("User-Agent")
 			didHandshake = true
 
 			go c.keepalive()
