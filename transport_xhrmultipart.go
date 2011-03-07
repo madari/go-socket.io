@@ -54,7 +54,7 @@ func (s *xhrMultipartSocket) accept(w http.ResponseWriter, req *http.Request, pr
 		return ErrConnected
 	}
 
-	rwc, _, err := w.Hijack()
+	rwc, _, err := w.(http.Hijacker).Hijack()
 
 	if err == nil {
 		rwc.(*net.TCPConn).SetReadTimeout(s.t.rtimeout)

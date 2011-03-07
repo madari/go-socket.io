@@ -56,7 +56,7 @@ func (s *xhrPollingSocket) accept(w http.ResponseWriter, req *http.Request, proc
 	}
 
 	s.req = req
-	s.rwc, _, err = w.Hijack()
+	s.rwc, _, err = w.(http.Hijacker).Hijack()
 	if err == nil {
 		s.rwc.(*net.TCPConn).SetReadTimeout(s.t.rtimeout)
 		s.rwc.(*net.TCPConn).SetWriteTimeout(s.t.wtimeout)
