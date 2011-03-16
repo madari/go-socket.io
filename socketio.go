@@ -144,9 +144,9 @@ func (sio *SocketIO) handle(t Transport, w http.ResponseWriter, req *http.Reques
 			return
 		}
 
-		w.SetHeader("Access-Control-Allow-Origin", origin)
-		w.SetHeader("Access-Control-Allow-Credentials", "true")
-		w.SetHeader("Access-Control-Allow-Methods", "POST, GET")
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET")
 	}
 
 	switch req.Method {

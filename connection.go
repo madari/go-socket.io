@@ -128,7 +128,7 @@ func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (er
 		c.mutex.Unlock()
 
 		if msg := req.FormValue("data"); msg != "" {
-			w.SetHeader("Content-Type", "text/plain")
+			w.Header().Set("Content-Type", "text/plain")
 			w.Write(okResponse)
 			c.receive([]byte(msg))
 		} else {
@@ -323,8 +323,7 @@ func (c *Conn) flusher() {
 				}
 			}
 
-			<-c.wakeupFlusher
-			if closed(c.wakeupFlusher) {
+			if _, ok := <-c.wakeupFlusher; !ok {
 				return
 			}
 		}
@@ -371,8 +370,7 @@ func (c *Conn) reader() {
 		}
 		c.mutex.Unlock()
 
-		<-c.wakeupReader
-		if closed(c.wakeupReader) {
+		if _, ok := <-c.wakeupReader; !ok {
 			break
 		}
 	}
