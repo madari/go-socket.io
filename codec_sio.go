@@ -2,7 +2,6 @@ package socketio
 
 import (
 	"bytes"
-	"container/vector"
 	"fmt"
 	"io"
 	"json"
@@ -200,7 +199,7 @@ func (dec *sioDecoder) Reset() {
 }
 
 func (dec *sioDecoder) Decode() (messages []Message, err os.Error) {
-	var vec vector.Vector
+	messages = make([]Message, 0, 1)
 	var c int
 
 L:
@@ -292,7 +291,7 @@ L:
 				dec.msg.data = dec.msg.data[len(sioFrameDelimHeartbeat):]
 			}
 
-			vec.Push(dec.msg)
+			messages = append(messages, dec.msg)
 
 			dec.state = sioDecodeStateBegin
 			dec.buf.Reset()
@@ -300,11 +299,6 @@ L:
 		}
 
 		dec.buf.WriteRune(c)
-	}
-
-	messages = make([]Message, vec.Len())
-	for i, v := range vec {
-		messages[i] = v.(*sioMessage)
 	}
 
 	if err == os.EOF {

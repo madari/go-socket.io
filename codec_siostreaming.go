@@ -2,7 +2,6 @@ package socketio
 
 import (
 	"bytes"
-	"container/vector"
 	"fmt"
 	"io"
 	"json"
@@ -117,7 +116,7 @@ func (dec *sioStreamingDecoder) Reset() {
 }
 
 func (dec *sioStreamingDecoder) Decode() (messages []Message, err os.Error) {
-	var vec vector.Vector
+	messages = make([]Message, 0, 1)
 	var c int
 	var typ uint
 
@@ -244,7 +243,7 @@ L:
 
 		case sioStreamingDecodeStateTrailer:
 			if c == ',' {
-				vec.Push(dec.msg)
+				messages = append(messages, dec.msg)
 				dec.state = sioStreamingDecodeStateBegin
 				continue
 			} else {
@@ -254,11 +253,6 @@ L:
 		}
 
 		dec.buf.WriteRune(c)
-	}
-
-	messages = make([]Message, vec.Len())
-	for i, v := range vec {
-		messages[i] = v.(*sioMessage)
 	}
 
 	if err == os.EOF {
