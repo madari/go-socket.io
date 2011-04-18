@@ -42,6 +42,7 @@ type Conn struct {
 	enc              Encoder
 	dec              Decoder
 	decBuf           bytes.Buffer
+	raddr            string
 }
 
 // NewConn creates a new connection for the sio. It generates the session id and
@@ -72,6 +73,11 @@ func newConn(sio *SocketIO) (c *Conn, err os.Error) {
 // fmt.Stringer interface.
 func (c *Conn) String() string {
 	return fmt.Sprintf("%v[%v]", c.sessionid, c.socket)
+}
+
+// RemoteAddr returns the remote network address of the connection in IP:port format
+func (c *Conn) RemoteAddr() string {
+	return c.raddr
 }
 
 // Send queues data for a delivery. It is totally content agnostic with one exception:
@@ -158,6 +164,7 @@ func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (er
 				return
 			}
 
+			c.raddr = req.RemoteAddr
 			c.handshaked = true
 			didHandshake = true
 
