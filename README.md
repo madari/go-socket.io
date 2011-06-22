@@ -3,7 +3,7 @@ go-socket.io
 
 The `socketio` package is a simple abstraction layer for different web browser-
 supported transport mechanisms. It is fully compatible with the
-[Socket.IO client](http://github.com/LearnBoost/Socket.IO) JavaScript-library by
+[Socket.IO client](http://github.com/LearnBoost/Socket.IO) (version 0.6) JavaScript-library by
 [LearnBoost Labs](http://socket.io/). By writing custom codecs the `socketio`
 could be perhaps used with other clients, too.
 
@@ -16,6 +16,11 @@ popular browser transport mechanism today:
 - [XHR Long Polling](http://en.wikipedia.org/wiki/Comet_%28programming%29#XMLHttpRequest_long_polling)
 - [XHR Multipart Streaming](http://en.wikipedia.org/wiki/Comet_%28programming%29#XMLHttpRequest)
 - [ActiveX HTMLFile](http://cometdaily.com/2007/10/25/http-streaming-and-internet-explorer/)
+
+## Compatibility with Socket.IO 0.7
+
+**Go-socket.io is not currently compatible with the latest and greatest Socket.IO 0.7.**
+This compatibility is currently the #1 priority and will be addressed in future updates.
 
 ## Demo
 
