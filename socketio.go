@@ -169,7 +169,7 @@ func (sio *SocketIO) handle(t Transport, w http.ResponseWriter, req *http.Reques
 			pathLen--
 		}
 
-		parts = strings.Split(req.URL.Path[i:pathLen], "/", -1)
+		parts = strings.Split(req.URL.Path[i:pathLen], "/")
 	}
 
 	if len(parts) < 2 || parts[1] == "" {
@@ -240,10 +240,10 @@ func (sio *SocketIO) verifyOrigin(reqOrigin string) (string, bool) {
 		return "", false
 	}
 
-	host := strings.Split(url.Host, ":", 2)
+	host := strings.SplitN(url.Host, ":", 2)
 
 	for _, o := range sio.config.Origins {
-		origin := strings.Split(o, ":", 2)
+		origin := strings.SplitN(o, ":", 2)
 		if origin[0] == "*" || origin[0] == host[0] {
 			if len(origin) < 2 || origin[1] == "*" {
 				return o, true
@@ -279,7 +279,7 @@ func (sio *SocketIO) generatePolicyFile() []byte {
 
 	if sio.config.Origins != nil {
 		for _, origin := range sio.config.Origins {
-			parts := strings.Split(origin, ":", 2)
+			parts := strings.SplitN(origin, ":", 2)
 			if len(parts) < 1 {
 				continue
 			}
