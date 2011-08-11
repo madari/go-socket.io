@@ -239,6 +239,7 @@ func (c *Conn) disconnect() {
 func (c *Conn) receive(data []byte) {
 	c.decBuf.Write(data)
 	msgs, err := c.dec.Decode()
+	c.decBuf.Reset()
 	if err != nil {
 		c.sio.Log("sio/conn: receive/decode:", err, c)
 		return

@@ -236,7 +236,7 @@ L:
 				}
 			}
 
-			dec.msg.data = dec.buf.String()
+			dec.msg.data = dec.buf.Bytes()
 			dec.buf.Reset()
 			dec.state = sioStreamingDecodeStateTrailer
 			fallthrough

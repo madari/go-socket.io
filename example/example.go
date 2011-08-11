@@ -24,12 +24,12 @@ type Message struct {
 func main() {
 	buffer := new(vector.Vector)
 	mutex := new(sync.Mutex)
-	
+
 	// create the socket.io server and mux it to /socket.io/
 	config := socketio.DefaultConfig
 	config.Origins = []string{"localhost:8080"}
 	sio := socketio.NewSocketIO(&config)
-	
+
 	go func() {
 		if err := sio.ListenAndServeFlashPolicy(":843"); err != nil {
 			log.Println(err)
@@ -61,7 +61,7 @@ func main() {
 	log.Println("Server starting. Tune your browser to http://localhost:8080/")
 
 	mux := sio.ServeMux()
-	mux.Handle("/", http.FileServer("www/", "/"))
+	mux.Handle("/", http.FileServer(http.Dir("www/")))
 
 	if err := http.ListenAndServe(":8080", mux); err != nil {
 		log.Fatal("ListenAndServe:", err)
