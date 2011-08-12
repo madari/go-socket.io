@@ -330,7 +330,6 @@ func (c *Conn) flusher() {
 			if !ok {
 				return
 			}
-
 			err = c.enc.Encode(buf, msg)
 			n = 1
 
@@ -351,12 +350,12 @@ func (c *Conn) flusher() {
 				}
 			}
 		}
-
+		
 		if err != nil {
 			c.sio.Logf("sio/conn: flusher/encode: lost %d messages (%d bytes): %s %s", n, buf.Len(), err, c)
 			continue
 		}
-
+		
 	FlushLoop:
 		for {
 			for {
@@ -401,12 +400,12 @@ func (c *Conn) reader() {
 					if neterr, ok := err.(*net.OpError); ok && neterr.Timeout() {
 						c.sio.Log("sio/conn: lost connection (timeout):", c)
 						socket.Write(emptyResponse)
-						
+
 					} else if err == bufio.ErrBufferFull {
 						totalRead += nr
 						c.decBuf.Write(buf[0:nr])
 						continue
-						
+
 					} else {
 						c.sio.Log("sio/conn: lost connection:", c)
 					}
@@ -415,14 +414,15 @@ func (c *Conn) reader() {
 			} else if nr < 0 {
 				break
 			} else if nr > 0 {
-				/*
 				totalRead += nr
-				c.sio.Log("DEBUG: totalRead", totalRead, limitRead)
+				
+				/*
 				if totalRead > limitRead {
 					c.sio.Logf("sio/conn: client %v message exceeded limit (%v/%v):", c, totalRead, limitRead)
 					break
 				}
 				*/
+				
 				c.receive(buf[0:nr])
 			}
 			totalRead = 0
