@@ -52,9 +52,9 @@ var encodeTests = []encodeTest{
 	},
 	{
 		struct {
-			Boolean bool   "bOoLeAn"
-			Str     string "sTr"
-			Array   []int  "A"
+			Boolean bool   `json:"bOoLeAn"`
+			Str     string `json:"sTr"`
+			Array   []int  `json:"A"`
 		}{
 			false,
 			"string♥",
