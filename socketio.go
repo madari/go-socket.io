@@ -2,13 +2,14 @@ package socketio
 
 import (
 	"bytes"
-	"net"
-	"io"
 	"fmt"
 	"http"
+	"io"
+	"net"
 	"os"
 	"strings"
 	"sync"
+	"url"
 )
 
 // SocketIO handles transport abstraction and provide the user
@@ -27,7 +28,6 @@ type SocketIO struct {
 		onMessage    func(*Conn, Message) // Invoked on a message.
 	}
 }
-
 
 // NewSocketIO creates a new socketio server with chosen transports and configuration
 // options. If transports is nil, the DefaultTransports is used. If config is nil, the
@@ -235,12 +235,12 @@ func (sio *SocketIO) verifyOrigin(reqOrigin string) (string, bool) {
 		return "", false
 	}
 
-	url, err := http.ParseURL(reqOrigin)
-	if err != nil || url.Host == "" {
+	u, err := url.Parse(reqOrigin)
+	if err != nil || u.Host == "" {
 		return "", false
 	}
 
-	host := strings.SplitN(url.Host, ":", 2)
+	host := strings.SplitN(u.Host, ":", 2)
 
 	for _, o := range sio.config.Origins {
 		origin := strings.SplitN(o, ":", 2)
@@ -249,7 +249,7 @@ func (sio *SocketIO) verifyOrigin(reqOrigin string) (string, bool) {
 				return o, true
 			}
 			if len(host) < 2 {
-				switch url.Scheme {
+				switch u.Scheme {
 				case "http", "ws":
 					if origin[1] == "80" {
 						return o, true
