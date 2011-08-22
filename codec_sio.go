@@ -285,17 +285,19 @@ L:
 				}
 			}
 
-			dec.msg.data = dec.buf.Bytes()
+			data := dec.buf.Bytes()
 			dec.msg.typ = sioMessageTypeMessage
 
-			if bytes.HasPrefix(dec.msg.data, sioFrameDelimJSON) {
+			if bytes.HasPrefix(data, sioFrameDelimJSON) {
 				dec.msg.annotations = make(map[string]string)
 				dec.msg.annotations[SIOAnnotationJSON] = ""
-				dec.msg.data = dec.msg.data[len(sioFrameDelimJSON):]
-			} else if bytes.HasPrefix(dec.msg.data, sioFrameDelimHeartbeat) {
+				data = data[len(sioFrameDelimJSON):]
+			} else if bytes.HasPrefix(data, sioFrameDelimHeartbeat) {
 				dec.msg.typ = sioMessageTypeHeartbeat
-				dec.msg.data = dec.msg.data[len(sioFrameDelimHeartbeat):]
+				data = data[len(sioFrameDelimHeartbeat):]
 			}
+			dec.msg.data = make([]byte, len(data))
+			copy(dec.msg.data, data)
 
 			messages = append(messages, dec.msg)
 
