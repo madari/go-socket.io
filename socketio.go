@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"url"
 )
 
 // SocketIO handles transport abstraction and provide the user
@@ -22,12 +23,12 @@ type SocketIO struct {
 
 	// The callbacks set by the user
 	callbacks struct {
-		onConnect    func(*Conn)          // Invoked on new connection.
-		onDisconnect func(*Conn)          // Invoked on a lost connection.
-		onMessage    func(*Conn, Message) // Invoked on a message.
+		onConnect    func(*Conn)              // Invoked on new connection.
+		onDisconnect func(*Conn)              // Invoked on a lost connection.
+		onMessage    func(*Conn, Message)     // Invoked on a message.
+		isAuthorized func(*http.Request) bool // Auth test during new http request
 	}
 }
-
 
 // NewSocketIO creates a new socketio server with chosen transports and configuration
 // options. If transports is nil, the DefaultTransports is used. If config is nil, the
@@ -111,6 +112,15 @@ func (sio *SocketIO) OnMessage(f func(*Conn, Message)) os.Error {
 	return nil
 }
 
+// SetAuthorization sets f to be invoked when a new http request is made. It passes
+// the http.Request as an argument to the callback.
+// The callback should return true if the connection is authorized or false if it
+// should be dropped. Not setting this callback results in a default pass-through.
+func (sio *SocketIO) SetAuthorization(f func(*http.Request) bool) os.Error {
+	sio.callbacks.isAuthorized = f
+	return nil
+}
+
 func (sio *SocketIO) Log(v ...interface{}) {
 	if sio.config.Logger != nil {
 		sio.config.Logger.Println(v...)
@@ -136,6 +146,12 @@ func (sio *SocketIO) handle(t Transport, w http.ResponseWriter, req *http.Reques
 	var parts []string
 	var c *Conn
 	var err os.Error
+
+	if !sio.isAuthorized(req) {
+		sio.Log("sio/handle: unauthorized request:", req)
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 
 	if origin := req.Header.Get("Origin"); origin != "" {
 		if _, ok := sio.verifyOrigin(origin); !ok {
@@ -230,17 +246,28 @@ func (sio *SocketIO) onMessage(c *Conn, msg Message) {
 	}
 }
 
+// isAuthorized is called during the handle() of any new http request
+// If the user has set a callback, this is a hook for returning whether
+// the connection is authorized. If no callback has been set, this method
+// always returns true as a pass-through
+func (sio *SocketIO) isAuthorized(req *http.Request) bool {
+	if sio.callbacks.isAuthorized != nil {
+		return sio.callbacks.isAuthorized(req)
+	}
+	return true
+}
+
 func (sio *SocketIO) verifyOrigin(reqOrigin string) (string, bool) {
 	if sio.config.Origins == nil {
 		return "", false
 	}
 
-	url, err := http.ParseURL(reqOrigin)
-	if err != nil || url.Host == "" {
+	url_, err := url.Parse(reqOrigin)
+	if err != nil || url_.Host == "" {
 		return "", false
 	}
 
-	host := strings.SplitN(url.Host, ":", 2)
+	host := strings.SplitN(url_.Host, ":", 2)
 
 	for _, o := range sio.config.Origins {
 		origin := strings.SplitN(o, ":", 2)
@@ -249,7 +276,7 @@ func (sio *SocketIO) verifyOrigin(reqOrigin string) (string, bool) {
 				return o, true
 			}
 			if len(host) < 2 {
-				switch url.Scheme {
+				switch url_.Scheme {
 				case "http", "ws":
 					if origin[1] == "80" {
 						return o, true

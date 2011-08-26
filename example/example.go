@@ -24,12 +24,12 @@ type Message struct {
 func main() {
 	buffer := new(vector.Vector)
 	mutex := new(sync.Mutex)
-
+	
 	// create the socket.io server and mux it to /socket.io/
 	config := socketio.DefaultConfig
 	config.Origins = []string{"localhost:8080"}
 	sio := socketio.NewSocketIO(&config)
-
+	
 	go func() {
 		if err := sio.ListenAndServeFlashPolicy(":843"); err != nil {
 			log.Println(err)

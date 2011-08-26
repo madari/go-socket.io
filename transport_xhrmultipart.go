@@ -92,7 +92,6 @@ func (s *xhrMultipartSocket) Read(p []byte) (n int, err os.Error) {
 	return s.rwc.Read(p)
 }
 
-
 // Write sends a single multipart message to the wire.
 func (s *xhrMultipartSocket) Write(p []byte) (n int, err os.Error) {
 	if !s.connected {
