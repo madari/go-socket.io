@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"os"
 	"strconv"
-	"sync"
 )
 
 // Client is a toy interface.
@@ -31,7 +30,6 @@ type WebsocketClient struct {
 	ws           *websocket.Conn
 	onDisconnect func()
 	onMessage    func(Message)
-	lock sync.Mutex
 }
 
 func NewWebsocketClient(codec Codec) (wc *WebsocketClient) {
@@ -136,9 +134,6 @@ func (wc *WebsocketClient) OnMessage(f func(Message)) {
 }
 
 func (wc *WebsocketClient) Send(payload interface{}) os.Error {
-	wc.lock.Lock()
-	defer wc.lock.Unlock()
-	
 	if wc.ws == nil {
 		return ErrNotConnected
 	}
