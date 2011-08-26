@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"url"
 )
 
 // SocketIO handles transport abstraction and provide the user
@@ -146,7 +147,7 @@ func (sio *SocketIO) handle(t Transport, w http.ResponseWriter, req *http.Reques
 	var c *Conn
 	var err os.Error
 
-	if allowed := sio.isAuthorized(req); !allowed {
+	if !sio.isAuthorized(req) {
 		sio.Log("sio/handle: unauthorized request:", req)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -261,12 +262,12 @@ func (sio *SocketIO) verifyOrigin(reqOrigin string) (string, bool) {
 		return "", false
 	}
 
-	url, err := http.ParseURL(reqOrigin)
-	if err != nil || url.Host == "" {
+	url_, err := url.Parse(reqOrigin)
+	if err != nil || url_.Host == "" {
 		return "", false
 	}
 
-	host := strings.SplitN(url.Host, ":", 2)
+	host := strings.SplitN(url_.Host, ":", 2)
 
 	for _, o := range sio.config.Origins {
 		origin := strings.SplitN(o, ":", 2)
@@ -275,7 +276,7 @@ func (sio *SocketIO) verifyOrigin(reqOrigin string) (string, bool) {
 				return o, true
 			}
 			if len(host) < 2 {
-				switch url.Scheme {
+				switch url_.Scheme {
 				case "http", "ws":
 					if origin[1] == "80" {
 						return o, true
