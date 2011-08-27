@@ -43,6 +43,7 @@ type Message interface {
 	Annotations() map[string]string
 	Annotation(string) (string, bool)
 	Data() string
+	Bytes() []byte
 	Type() uint8
-	JSON() (string, bool)
+	JSON() ([]byte, bool)
 }

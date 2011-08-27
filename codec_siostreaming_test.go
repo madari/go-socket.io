@@ -61,15 +61,15 @@ var streamingEncodeTests = []streamingEncodeTest{
 	},
 	{
 		struct {
-			Boolean bool   `json:"bOoLeAn"`
-			Str     string `json:"sTr"`
-			Array   []int  `json:"A"`
+			Boolean bool
+			Str     string
+			Array   []int
 		}{
 			false,
 			"string♥",
 			[]int{1, 2, 3, 4},
 		},
-		streamingFrame(`{"bOoLeAn":false,"sTr":"string♥","A":[1,2,3,4]}`, 1, true),
+		streamingFrame(`{"Boolean":false,"Str":"string♥","Array":[1,2,3,4]}`, 1, true),
 	},
 	{
 		[]byte("hello, world"),

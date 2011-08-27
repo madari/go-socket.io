@@ -52,15 +52,15 @@ var encodeTests = []encodeTest{
 	},
 	{
 		struct {
-			Boolean bool   `json:"bOoLeAn"`
-			Str     string `json:"sTr"`
-			Array   []int  `json:"A"`
+			Boolean bool
+			Str     string
+			Array   []int
 		}{
 			false,
 			"string♥",
 			[]int{1, 2, 3, 4},
 		},
-		frame(`{"bOoLeAn":false,"sTr":"string♥","A":[1,2,3,4]}`, true),
+		frame(`{"Boolean":false,"Str":"string♥","Array":[1,2,3,4]}`, true),
 	},
 	{
 		[]byte("hello, world"),
