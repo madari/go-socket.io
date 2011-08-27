@@ -72,12 +72,7 @@ func (s *websocketSocket) accept(w http.ResponseWriter, req *http.Request, proce
 	}
 
 	err = errWebsocketHandshake
-	if _, ok := req.Header["Sec-Websocket-Key1"]; ok {
-		websocket.Handler(f).ServeHTTP(w, req)
-	} else {
-		websocket.Draft75Handler(f).ServeHTTP(w, req)
-	}
-
+	websocket.Handler(f).ServeHTTP(w, req)
 	return
 }
 
