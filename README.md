@@ -17,10 +17,9 @@ popular browser transport mechanism today:
 - [XHR Multipart Streaming](http://en.wikipedia.org/wiki/Comet_%28programming%29#XMLHttpRequest)
 - [ActiveX HTMLFile](http://cometdaily.com/2007/10/25/http-streaming-and-internet-explorer/)
 
-## Compatibility with Socket.IO 0.7
+## Compatibility with Socket.IO 0.7->
 
-**Go-socket.io is not currently compatible with the latest and greatest Socket.IO 0.7.**
-This compatibility is currently the #1 priority and will be addressed in future updates.
+**Go-socket.io is currently compatible with Socket.IO 0.6 clients only.**
 
 ## Demo
 
