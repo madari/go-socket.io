@@ -88,7 +88,7 @@ func (s *xhrPollingSocket) Write(p []byte) (int, os.Error) {
 	buf.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
 	fmt.Fprintf(buf, "Content-Length: %d\r\n", len(p))
 
-	if origin, ok := s.req.Header["Origin"]; ok {
+	if origin := s.req.Header.Get("Origin"); origin != "" {
 		fmt.Fprintf(buf, "Access-Control-Allow-Origin: %s\r\n", origin)
 		buf.WriteString("Access-Control-Allow-Credentials: true\r\n")
 	}
