@@ -1,3 +1,3 @@
 [submodule "example/www/vendor/socket.io-client"]
 	path = example/www/vendor/socket.io-client
-	url = git://github.com/LearnBoost/Socket.IO.git
+	url = git://github.com/LearnBoost/socket.io-client
