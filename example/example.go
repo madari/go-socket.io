@@ -9,15 +9,15 @@ import (
 )
 
 type Announcement struct {
-	Announcement string "announcement"
+	Announcement string `json:"announcement"`
 }
 
 type Buffer struct {
-	Buffer []interface{} "buffer"
+	Buffer []interface{} `json:"buffer"`
 }
 
 type Message struct {
-	Message []string "message"
+	Message []string `json:"message"`
 }
 
 // A very simple chat server
