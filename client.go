@@ -53,8 +53,7 @@ func (c *Client) Receive(msg *Message) (err os.Error) {
 			return os.EOF
 
 		case MessageConnect:
-			Log.debug(c, " client: received connect: ", msg.Inspect())
-			c.endpoint = msg.String()
+			return
 
 		case MessageError, MessageACK, MessageNOOP:
 			Log.warn(c, " client: (TODO) ", msg.Inspect())
@@ -126,7 +125,18 @@ func Dial(url_, origin string) (c *Client, err os.Error) {
 	c = &Client{dec: &Decoder{}, enc: &Encoder{}}
 	c.sid = parts[0]
 	wsurl := "ws" + url_[4:]
-	Log.debug("wsurl=", wsurl)
-	c.ws, err = websocket.Dial(fmt.Sprintf("%s%d/websocket/%s", wsurl, ProtocolVersion, c.sid), "", origin)
+	if c.ws, err = websocket.Dial(fmt.Sprintf("%s%d/websocket/%s", wsurl, ProtocolVersion, c.sid), "", origin); err != nil {
+		return
+	}
+
+	var msg Message
+	if err = c.Receive(&msg); err != nil {
+		c.ws.Close()
+		return
+	}
+	if msg.Type() != MessageConnect {
+		c.ws.Close()
+		err = os.NewError("unexpected connect message: " + msg.Inspect())
+	}
 	return
 }
