@@ -283,7 +283,7 @@ var encodeTests = []encodeTest{
 func TestEncode(t *testing.T) {
 	var err os.Error
 	var buf bytes.Buffer
-	enc := &Encoder{}
+	enc := &Encoder{MustFrame: true}
 
 	for _, test := range encodeTests {
 		buf.Reset()

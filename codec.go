@@ -11,25 +11,26 @@ import (
 
 type Encoder struct {
 	bytes.Buffer
+	MustFrame bool
 }
 
 func (enc *Encoder) Encode(dst io.Writer, payload []interface{}) (err os.Error) {
-	//	if len(payload) > 1 {
-	for _, p := range payload {
-		enc.Reset()
-		if err = encodePacket(&enc.Buffer, p); err != nil {
-			return
+	if enc.MustFrame || len(payload) > 1 {
+		for _, p := range payload {
+			enc.Reset()
+			if err = encodePacket(&enc.Buffer, p); err != nil {
+				return
+			}
+			if _, err = fmt.Fprintf(dst, "\uFFFD%d\uFFFD%s", enc.Len(), enc.Bytes()); err != nil {
+				return
+			}
 		}
-		if _, err = fmt.Fprintf(dst, "\uFFFD%d\uFFFD%s", enc.Len(), enc.Bytes()); err != nil {
-			return
-		}
-	}
-	/*	} else {
+	} else {
 		enc.Reset()
 		if err = encodePacket(&enc.Buffer, payload[0]); err == nil {
 			_, err = enc.WriteTo(dst)
 		}
-	}*/
+	}
 	return err
 }
 
