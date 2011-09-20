@@ -1,69 +1,94 @@
 package main
 
 import (
-	"container/vector"
 	"http"
 	"log"
 	"socketio"
 	"sync"
+	"time"
 )
 
-type Announcement struct {
-	Announcement string `json:"announcement"`
-}
+var (
+	nicks = make(map[string]string)
+	mu    sync.Mutex
+)
 
-type Buffer struct {
-	Buffer []interface{} `json:"buffer"`
-}
-
-type Message struct {
-	Message []string `json:"message"`
-}
-
-// A very simple chat server
 func main() {
-	buffer := new(vector.Vector)
-	mutex := new(sync.Mutex)
+	// use verbose logger
+	socketio.Log = socketio.VerboseLogger
+	sio := socketio.NewServer(nil)
 
-	// create the socket.io server and mux it to /socket.io/
-	config := socketio.DefaultConfig
-	config.Origins = []string{"localhost:8080"}
-	sio := socketio.NewSocketIO(&config)
+	http.Handle("/", http.FileServer(http.Dir("www/")))
+	http.Handle("/socket.io/", http.StripPrefix("/socket.io/", sio.Handler(func(c *socketio.Conn) {
+		var msg socketio.Message
+		var nick string
+
+		for {
+			if err := c.Receive(&msg); err != nil {
+				break
+			}
+
+			event, _ := msg.Event()
+			switch event {
+			case "nickname":
+				if err := msg.ReadArguments(&nick); err != nil {
+					continue
+				}
+
+				mu.Lock()
+				if nicks[nick] != "" {
+					c.Reply(&msg, true)
+				} else {
+					c.Reply(&msg, false)
+					nicks[nick] = nick
+					sio.EmitExcept(c, "announcement", nick+" connected")
+					sio.Emit("nicknames", nicks)
+				}
+				mu.Unlock()
+
+			case "user message":
+				var payload string
+				if err := msg.ReadArguments(&payload); err != nil {
+					continue
+				}
+				sio.EmitExcept(c, "user message", nick, payload)
+			}
+		}
+
+		if nick != "" {
+			mu.Lock()
+			nicks[nick] = "", false
+			sio.Emit("announcement", nick+" disconnected")
+			sio.Emit("nicknames", nicks)
+			mu.Unlock()
+		}
+	})))
 
 	go func() {
-		if err := sio.ListenAndServeFlashPolicy(":843"); err != nil {
-			log.Println(err)
-		}
+		time.Sleep(2e9)
+		log.Println("Spawning echo client")
+		echo()
 	}()
 
-	// when a client connects - send it the buffer and broadcasta an announcement
-	sio.OnConnect(func(c *socketio.Conn) {
-		mutex.Lock()
-		c.Send(Buffer{buffer.Copy()})
-		mutex.Unlock()
-		sio.Broadcast(Announcement{"connected: " + c.String()})
-	})
-
-	// when a client disconnects - send an announcement
-	sio.OnDisconnect(func(c *socketio.Conn) {
-		sio.Broadcast(Announcement{"disconnected: " + c.String()})
-	})
-
-	// when a client send a message - broadcast and store it
-	sio.OnMessage(func(c *socketio.Conn, msg socketio.Message) {
-		payload := Message{[]string{c.String(), msg.Data()}}
-		mutex.Lock()
-		buffer.Push(payload)
-		mutex.Unlock()
-		sio.Broadcast(payload)
-	})
-
 	log.Println("Server starting. Tune your browser to http://localhost:8080/")
-
-	mux := sio.ServeMux()
-	mux.Handle("/", http.FileServer(http.Dir("www/")))
-
-	if err := http.ListenAndServe(":8080", mux); err != nil {
+	if err := http.ListenAndServe(":8080", nil); err != nil {
 		log.Fatal("ListenAndServe:", err)
+	}
+}
+
+func echo() {
+	var msg socketio.Message
+	c, err := socketio.Dial("http://localhost:8080/socket.io/", "http://localhost:8080/")
+	defer c.Close()
+	if err != nil {
+		panic(err)
+	}
+	c.Emit("nickname", "echo-client")
+	for {
+		if err := c.Receive(&msg); err != nil {
+			log.Print("client received error: ", err)
+			return
+		}
+		c.Emit("user message", msg.String())
 	}
 }

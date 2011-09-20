@@ -1,384 +1,373 @@
 package socketio
 
 import (
-	"http"
-	"os"
-	"net"
 	"bytes"
-	"time"
-	"fmt"
+	"http"
+	"io/ioutil"
+	"net"
+	"os"
 	"sync"
+	"time"
 )
 
 var (
-	// ErrDestroyed is used when the connection has been disconnected (i.e. can't be used anymore).
-	ErrDestroyed = os.NewError("connection is disconnected")
-
-	// ErrQueueFull is used when the send queue is full.
-	ErrQueueFull = os.NewError("send queue is full")
-
-	errMissingPostData = os.NewError("Missing HTTP post data-field")
+	ErrDisconnected = os.NewError("connection is disconnected")
 )
 
-// Conn represents a single session and handles its handshaking,
-// message buffering and reconnections.
 type Conn struct {
+	connect          chan byte
+	dec              *Decoder
+	disconnect       chan byte
+	disconnected     bool
+	flush            chan chan os.Error
+	incoming         chan []byte
 	mutex            sync.Mutex
-	socket           socket    // The i/o connection that abstract the transport.
-	sio              *SocketIO // The server.
-	sessionid        SessionID
 	online           bool
-	lastConnected    int64
-	lastDisconnected int64
-	lastHeartbeat    heartbeat
-	numHeartbeats    int
-	ticker           *time.Ticker
-	queue            chan interface{} // Buffers the outgoing messages.
-	numConns         int              // Total number of reconnects.
-	handshaked       bool             // Indicates if the handshake has been sent.
-	disconnected     bool             // Indicates if the connection has been disconnected.
-	wakeupFlusher    chan byte        // Used internally to wake up the flusher.
-	wakeupReader     chan byte        // Used internally to wake up the reader.
-	enc              Encoder
-	dec              Decoder
-	decBuf           bytes.Buffer
-	raddr            string
+	pendingHeartbeat bool
+	queue            []interface{}
+	server           *server
+	shutdown         chan byte
+	sid              string
+	socket           Socket
+	transport        *Transport
 }
 
-// NewConn creates a new connection for the sio. It generates the session id and
-// prepares the internal structure for usage.
-func newConn(sio *SocketIO) (c *Conn, err os.Error) {
-	var sessionid SessionID
-	if sessionid, err = NewSessionID(); err != nil {
-		sio.Log("sio/newConn: newSessionID:", err)
-		return
+func newConn(server *server) (c *Conn, err os.Error) {
+	var sid string
+	if sid, err = newSessionId(); err != nil {
+		return nil, err
 	}
 
 	c = &Conn{
-		sio:           sio,
-		sessionid:     sessionid,
-		wakeupFlusher: make(chan byte),
-		wakeupReader:  make(chan byte),
-		queue:         make(chan interface{}, sio.config.QueueLength),
-		enc:           sio.config.Codec.NewEncoder(),
+		connect:    make(chan byte),
+		dec:        &Decoder{},
+		disconnect: make(chan byte),
+		flush:      make(chan chan os.Error, 1),
+		incoming:   make(chan []byte),
+		server:     server,
+		shutdown:   make(chan byte),
+		sid:        sid,
 	}
 
-	c.dec = sio.config.Codec.NewDecoder(&c.decBuf)
-
+	go c.machine()
 	return
 }
 
-
-// String returns a string representation of the connection and implements the
-// fmt.Stringer interface.
-func (c *Conn) String() string {
-	return fmt.Sprintf("%v[%v]", c.sessionid, c.socket)
+func (c *Conn) Emit(name string, args ...interface{}) os.Error {
+	return c.Send(&event{Name: name, Args: args})
 }
 
-// RemoteAddr returns the remote network address of the connection in IP:port format
-func (c *Conn) RemoteAddr() string {
-	return c.raddr
-}
+func (c *Conn) Receive(msg *Message) (err os.Error) {
+	for {
+		if err = c.dec.Decode(msg); err == os.EOF {
+			if payload, ok := <-c.incoming; ok {
+				c.dec.Write(payload)
+				continue
+			} else {
+				return os.EOF
+			}
+		} else if err != nil {
+			break
+		}
 
-// Send queues data for a delivery. It is totally content agnostic with one exception:
-// the given data must be one of the following: a handshake, a heartbeat, an int, a string or
-// it must be otherwise marshallable by the standard json package. If the send queue
-// has reached sio.config.QueueLength or the connection has been disconnected,
-// then the data is dropped and a an error is returned.
-func (c *Conn) Send(data interface{}) (err os.Error) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+		switch msg.typ {
+		case MessageHeartbeat:
+			Log.debug(c, " receive: received heartbeat: ", msg.Inspect())
+			c.mutex.Lock()
+			c.pendingHeartbeat = false
+			c.mutex.Unlock()
 
-	if c.disconnected {
-		return ErrDestroyed
+		case MessageDisconnect:
+			Log.info(c, " receive: received disconnect: ", msg.Inspect())
+			c.mutex.Lock()
+			if !c.disconnected {
+				if c.socket != nil {
+					c.socket.Close()
+				}
+				c.shutdown <- 1
+			}
+			c.mutex.Unlock()
+			return os.EOF
+
+		case MessageConnect, MessageError, MessageACK, MessageNOOP:
+			Log.warn(c, " receive: (TODO) ", msg.Inspect())
+
+		case MessageEvent, MessageText, MessageJSON:
+			if msg.id > 0 && !msg.ack {
+				Log.debug(c, " receive: automatically acking: ", msg.Inspect())
+				c.mutex.Lock()
+				if c.disconnected {
+					Log.warn(c, " receive: unable to ack since disconnected: ", msg.Inspect())
+					c.mutex.Unlock()
+					return os.EOF
+				}
+				c.dispatch(&ack{id: msg.id})
+				c.mutex.Unlock()
+			}
+			return
+
+		default:
+			Log.warn(c, " receive: unknown message type: ", msg.Inspect())
+		}
 	}
 
-	select {
-	case c.queue <- data:
-	default:
-		return ErrQueueFull
-	}
-
-	return nil
+	c.dec.Reset()
+	return
 }
 
-func (c *Conn) Close() os.Error {
-	c.mutex.Lock()
+func (c *Conn) Reply(m *Message, a ...interface{}) os.Error {
+	ack := &ack{
+		id:   m.id,
+		data: a,
+	}
+	if len(a) > 0 {
+		ack.event = true
+	}
+	return c.Send(ack)
+}
 
+func (c *Conn) Send(data interface{}) os.Error {
+	c.mutex.Lock()
 	if c.disconnected {
 		c.mutex.Unlock()
-		return ErrNotConnected
+		return ErrDisconnected
 	}
-
-	c.disconnect()
+	c.dispatch(data)
 	c.mutex.Unlock()
-
-	c.sio.onDisconnect(c)
 	return nil
 }
 
-// Handle takes over an http responseWriter/req -pair using the given Transport.
-// If the HTTP method is POST then request's data-field will be used as an incoming
-// message and the request is dropped. If the method is GET then a new socket encapsulating
-// the request is created and a new connection is establised (or the connection will be
-// reconnected). Finally, handle will wake up the reader and the flusher.
-func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (err os.Error) {
+func (c *Conn) SendWait(data interface{}) <-chan os.Error {
+	res := make(chan os.Error, 1)
+	c.mutex.Lock()
+	if c.disconnected {
+		c.mutex.Unlock()
+		res <- ErrDisconnected
+		close(res)
+		return res
+	}
+	c.queue = append(c.queue, data)
+	c.flush <- res
+	c.mutex.Unlock()
+	return res
+}
+
+func (c *Conn) dispatch(data interface{}) {
+	c.queue = append(c.queue, data)
+	select {
+	case c.flush <- nil:
+	default:
+	}
+}
+
+func (c *Conn) String() string {
+	return c.sid
+}
+
+func (c *Conn) close() {
+	if c.Send(disconnect("")) == ErrDisconnected {
+		return
+	}
+	c.shutdown <- 1
+}
+
+func (c *Conn) handle(t *Transport, w http.ResponseWriter, req *http.Request) (err os.Error) {
 	c.mutex.Lock()
 
 	if c.disconnected {
 		c.mutex.Unlock()
-		return ErrNotConnected
+		return ErrDisconnected
 	}
 
 	if req.Method == "POST" {
 		c.mutex.Unlock()
 
-		if msg := req.FormValue("data"); msg != "" {
-			w.Header().Set("Content-Type", "text/plain")
-			w.Write(okResponse)
-			c.receive([]byte(msg))
+		var payload []byte
+		if t.PostEncoded {
+			payload = []byte(req.FormValue("d"))
 		} else {
-			c.sio.Log("sio/conn: handle: POST missing data-field:", c)
-			err = errMissingPostData
+			payload, err = ioutil.ReadAll(req.Body)
+			req.Body.Close()
+		}
+
+		if err == nil {
+			Log.debugf("%s handle: received: %s", c, payload)
+			c.incoming <- payload
+			w.Header().Set("Content-Type", "text/plain")
+			w.Write([]byte("1"))
+		} else {
+			Log.warn(c, " handle: unable to read post body: ", err)
 		}
 
 		return
 	}
 
-	didHandshake := false
-
-	s := t.newSocket()
-	err = s.accept(w, req, func() {
+	err = t.Hijack(w, req, func(socket Socket) {
+		if t.Type == PollingTransport {
+			socket.SetReadTimeout(c.server.config.PollingTimeout)
+		}
+		socket.SetWriteTimeout(c.server.config.WriteTimeout)
 		if c.socket != nil {
 			c.socket.Close()
 		}
-		c.socket = s
-		c.online = true
-		c.lastConnected = time.Nanoseconds()
-
-		if !c.handshaked {
-			// the connection has not been handshaked yet.
-			if err = c.handshake(); err != nil {
-				c.sio.Log("sio/conn: handle/handshake:", err, c)
-				c.socket.Close()
-				return
-			}
-
-			c.raddr = req.RemoteAddr
-			c.handshaked = true
-			didHandshake = true
-
-			go c.keepalive()
-			go c.flusher()
-			go c.reader()
-
-			c.sio.Log("sio/conn: connected:", c)
-		} else {
-			c.sio.Log("sio/conn: reconnected:", c)
-		}
-
-		c.numConns++
-
-		select {
-		case c.wakeupFlusher <- 1:
-		default:
-		}
-
-		select {
-		case c.wakeupReader <- 1:
-		default:
-		}
-
-		if didHandshake {
-			c.mutex.Unlock()
-			c.sio.onConnect(c)
-		}
+		c.socket = socket
+		c.transport = t
+		c.connect <- 1
+		c.mutex.Unlock()
+		c.drain(socket)
+		c.disconnect <- 1
 	})
 
-	if !didHandshake {
+	if err != nil {
 		c.mutex.Unlock()
 	}
 
 	return
 }
 
-// Handshake sends the handshake to the socket.
-func (c *Conn) handshake() os.Error {
-	return c.enc.Encode(c.socket, handshake(c.sessionid))
-}
-
-
-func (c *Conn) disconnect() {
-	c.sio.Log("sio/conn: disconnected:", c)
-	c.socket.Close()
-	c.disconnected = true
-	close(c.wakeupFlusher)
-	close(c.wakeupReader)
-	close(c.queue)
-}
-
-// Receive decodes and handles data received from the socket.
-// It uses c.sio.codec to decode the data. The received non-heartbeat
-// messages (frames) are then passed to c.sio.onMessage method and the
-// heartbeats are processed right away (TODO).
-func (c *Conn) receive(data []byte) {
-	c.decBuf.Write(data)
-	msgs, err := c.dec.Decode()
-	if err != nil {
-		c.sio.Log("sio/conn: receive/decode:", err, c)
-		return
-	}
-
-	for _, m := range msgs {
-		if hb, ok := m.heartbeat(); ok {
-			c.lastHeartbeat = hb
-		} else {
-			c.sio.onMessage(c, m)
-		}
-	}
-}
-
-func (c *Conn) keepalive() {
-	c.ticker = time.NewTicker(c.sio.config.HeartbeatInterval)
-	defer c.ticker.Stop()
-
-Loop:
-	for t := range c.ticker.C {
-		c.mutex.Lock()
-
-		if c.disconnected {
-			c.mutex.Unlock()
-			return
-		}
-
-		if (!c.online && t-c.lastDisconnected > c.sio.config.ReconnectTimeout) || int(c.lastHeartbeat) < c.numHeartbeats {
-			c.disconnect()
-			c.mutex.Unlock()
-			break
-		}
-
-		c.numHeartbeats++
-
-		select {
-		case c.queue <- heartbeat(c.numHeartbeats):
-		default:
-			c.sio.Log("sio/keepalive: unable to queue heartbeat. fail now. TODO: FIXME", c)
-			c.disconnect()
-			c.mutex.Unlock()
-			break Loop
-		}
-
-		c.mutex.Unlock()
-	}
-
-	c.sio.onDisconnect(c)
-}
-
-// Flusher waits for messages on the queue. It then
-// tries to write the messages to the underlaying socket and
-// will keep on trying until the wakeupFlusher is killed or the payload
-// can be delivered. It is responsible for persisting messages until they
-// can be succesfully delivered. No more than c.sio.config.QueueLength messages
-// should ever be waiting for a delivery.
-//
-// NOTE: the c.sio.config.QueueLength is not a "hard limit", because one could have
-// max amount of messages waiting in the queue and in the payload itself
-// simultaneously.
 func (c *Conn) flusher() {
-	buf := new(bytes.Buffer)
+	var buf bytes.Buffer
 	var err os.Error
-	var msg interface{}
-	var n int
+	enc := &Encoder{}
 
-	for msg = range c.queue {
-		buf.Reset()
-		err = c.enc.Encode(buf, msg)
-		n = 1
-
-		if err == nil {
-
-		DrainLoop:
-			for n < c.sio.config.QueueLength {
-				select {
-				case msg = <-c.queue:
-					n++
-					if err = c.enc.Encode(buf, msg); err != nil {
-						break DrainLoop
-					}
-
-				default:
-					break DrainLoop
-				}
-			}
-		}
-		if err != nil {
-			c.sio.Logf("sio/conn: flusher/encode: lost %d messages (%d bytes): %s %s", n, buf.Len(), err, c)
-			continue
-		}
-
-	FlushLoop:
-		for {
-			for {
-				c.mutex.Lock()
-				_, err = buf.WriteTo(c.socket)
-				c.mutex.Unlock()
-
-				if err == nil {
-					break FlushLoop
-				} else if err != os.EAGAIN {
-					break
-				}
-			}
-
-			if _, ok := <-c.wakeupFlusher; !ok {
-				return
-			}
-		}
-	}
-}
-
-// Reader reads from the c.socket until the c.wakeupReader is closed.
-// It is responsible for detecting unrecoverable read errors and timeouting
-// the connection. When a read fails previously mentioned reasons, it will
-// call the c.disconnect method and start waiting for the next event on the
-// c.wakeupReader channel.
-func (c *Conn) reader() {
-	buf := make([]byte, c.sio.config.ReadBufferSize)
-
-	for {
+	for res := range c.flush {
 		c.mutex.Lock()
+		if err := enc.Encode(&buf, c.queue); err != nil {
+			Log.warn(c, " flusher: encode error: ", err)
+		}
+		c.queue = c.queue[:0]
 		socket := c.socket
 		c.mutex.Unlock()
 
 		for {
-			nr, err := socket.Read(buf)
-			if err != nil {
-				if err != os.EAGAIN {
-					if neterr, ok := err.(*net.OpError); ok && neterr.Timeout() {
-						c.sio.Log("sio/conn: lost connection (timeout):", c)
-						socket.Write(emptyResponse)
-					} else {
-						c.sio.Log("sio/conn: lost connection:", c)
-					}
-					break
-				}
-			} else if nr < 0 {
+			if _, err = buf.WriteTo(socket); err == nil {
 				break
-			} else if nr > 0 {
-				c.receive(buf[0:nr])
+			} else if err != os.EAGAIN {
+				Log.info(c, " flusher: write error: ", err)
+				break
 			}
 		}
-
-		c.mutex.Lock()
-		c.lastDisconnected = time.Nanoseconds()
-		socket.Close()
-		if c.socket == socket {
-			c.online = false
+		if res != nil {
+			res <- err
+			close(res)
 		}
-		c.mutex.Unlock()
+	}
+}
 
-		if _, ok := <-c.wakeupReader; !ok {
-			break
+func (c *Conn) drain(socket Socket) {
+	var buf []byte
+	defer socket.Close()
+
+	for {
+		err := socket.Receive(&buf)
+		if err != nil {
+			if err != os.EAGAIN {
+				if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
+					<-c.SendWait(noop(0))
+					Log.debug(c, " drain: lost connection (read timeout, noop sent)")
+				} else {
+					Log.debug(c, " drain: lost connection: ", err)
+				}
+				break
+			}
+		} else if len(buf) > 0 {
+			c.mutex.Lock()
+			if c.disconnected {
+				c.mutex.Unlock()
+				return
+			}
+			c.incoming <- buf
+			c.mutex.Unlock()
+		}
+	}
+}
+
+func (c *Conn) machine() {
+	numConns := 0
+
+	defer func() {
+		Log.debug(c, " machine: shutting down")
+		c.mutex.Lock()
+		c.disconnected = true
+		c.online = false
+		c.pendingHeartbeat = false
+		c.socket = nil
+		close(c.connect)
+		close(c.disconnect)
+		close(c.flush)
+		close(c.incoming)
+		close(c.shutdown)
+		c.mutex.Unlock()
+	}()
+
+	var ticker *time.Ticker
+	wait := func(ns int64) <-chan int64 {
+		if ticker != nil {
+			ticker.Stop()
+		}
+		ticker = time.NewTicker(ns)
+		return ticker.C
+	}
+
+	for {
+		Log.debug(c, " machine: waiting for connection")
+
+		select {
+		case <-c.shutdown:
+			Log.debug(c, " machine: got shutdown")
+			return
+
+		case <-c.connect:
+			Log.debugf("%s machine: online using %s (addr=%s, reconnect=%d)", c, c.transport.Name, c.socket.RemoteAddr(), numConns)
+			c.online = true
+
+			numConns++
+			if numConns == 1 {
+				go c.flusher()
+				c.Send(connect(""))
+			} else {
+				select {
+				case c.flush <- nil:
+				default:
+				}
+			}
+
+		Connected:
+			for {
+				if c.server.config.HeartbeatInterval <= 0 || c.transport.Type != StreamingTransport {
+					<-c.disconnect
+					break Connected
+				} else {
+					select {
+					case <-c.disconnect:
+						break Connected
+
+					case <-wait(c.server.config.HeartbeatInterval):
+						Log.debug(c, " machine: hit heartbeat interval, sending heartbeat and scheduling timeout")
+						c.mutex.Lock()
+						c.pendingHeartbeat = true
+						c.dispatch(heartbeat(0))
+						c.mutex.Unlock()
+						time.AfterFunc(c.server.config.HeartbeatTimeout, func() {
+							c.mutex.Lock()
+							defer c.mutex.Unlock()
+							if c.pendingHeartbeat {
+								Log.debug(c, " machine: heartbeat timeout fired")
+								c.socket.Close()
+								c.shutdown <- 1
+								return
+							}
+						})
+					}
+				}
+			}
+
+			c.online = false
+			Log.debug(c, " machine: offline")
+
+		case <-wait(c.server.config.CloseTimeout):
+			Log.debug(c, " machine: close timeout fired")
+			return
 		}
 	}
 }

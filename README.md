@@ -1,95 +1,167 @@
 go-socket.io
 ============
 
-The `socketio` package is a simple abstraction layer for different web browser-
-supported transport mechanisms. It is fully compatible with the
-[Socket.IO client](http://github.com/LearnBoost/Socket.IO) (version 0.6) JavaScript-library by
-[LearnBoost Labs](http://socket.io/). By writing custom codecs the `socketio`
-could be perhaps used with other clients, too.
+The `socketio` package is an transport abstraction layer attempting to make realtime
+web apps possible on every browser. It is meant to be used with the
+[Socket.IO client](http://github.com/LearnBoost/socket.io-client) JavaScript-library by
+[LearnBoost Labs](http://socket.io/).
 
-It provides an easy way for developers to rapidly prototype with the most
-popular browser transport mechanism today:
+Socket.IO uses feature detection to pick the best possible transport in every situation
+while abstracting all of this from the developer. Depending on the case, it chooses
+one of the following transports:
 
 - [HTML5 WebSockets](http://dev.w3.org/html5/websockets/)
 - [Adobe® Flash® Sockets](https://github.com/gimite/web-socket-js)
 - [JSONP Long Polling](http://en.wikipedia.org/wiki/JSONP#JSONP)
 - [XHR Long Polling](http://en.wikipedia.org/wiki/Comet_%28programming%29#XMLHttpRequest_long_polling)
-- [XHR Multipart Streaming](http://en.wikipedia.org/wiki/Comet_%28programming%29#XMLHttpRequest)
 - [ActiveX HTMLFile](http://cometdaily.com/2007/10/25/http-streaming-and-internet-explorer/)
 
-## Compatibility with Socket.IO 0.7->
-
-**Go-socket.io is currently compatible with Socket.IO 0.6 clients only.**
-
-## Demo
-
-[The Paper Experiment](http://wall-r.com/paper)
+New connections are assigned an session id and using those the clients can reconnect
+without losing messages: the server
+persists clients' pending messages if they can't
+be immediately delivered. 
 
 ## Crash course
 
-The `socketio` package works hand-in-hand with the standard `http` package (by
-plugging itself into `http.ServeMux`) and hence it doesn't need a
-full network port for itself. It has an callback-style event handling API. The
-callbacks are:
+The `socketio` package works hand-in-hand with the standard `http` package and hence
+must be muxed like any other `http.Handler`:
 
-- *SocketIO.OnConnect*
-- *SocketIO.OnDisconnect*
-- *SocketIO.OnMessage*
+```go
+sio := socketio.NewServer(nil)
+http.Handle("/socket.io/", http.StripPrefix("/socket.io/", 
+	sio.Handler(func (c *socketio.Conn) { /* whee */ })
+))
+```
 
-Other utility-methods include:
+After a connection has been established, the handler will be invoked
+and the connection will be terminated when the handler returns:
 
-- *SocketIO.ServeMux*
-- *SocketIO.Broadcast*
-- *SocketIO.BroadcastExcept*
-- *SocketIO.GetConn*
+```go
+func (c *socketio.Conn) {
+	// I shall disconnect after 10 seconds
+	time.Sleep(10e9)
+})
+```
 
-Each new connection will be automatically assigned an session id and
-using those the clients can reconnect without losing messages: the server
-persists clients' pending messages (until some configurable point) if they can't
-be immediately delivered. All writes are by design asynchronous and can be made
-through `Conn.Send`. The server also abstracts handshaking and various keep-alive mechanisms.
+### Receiving messages
 
-Finally, the actual format on the wire is described by a separate `Codec`. The
-default bundled codecs, `SIOCodec` and `SIOStreamingCodec` are fully compatible
-with the LearnBoost's [Socket.IO client](http://github.com/LearnBoost/Socket.IO)
-(master and development branches).
+The connection exposes `Receive(*Message)` method for receiving data from the
+server. The method will block until the connection is shutdown or a message
+was received. The connection will internally handle various "side-channel"
+messages while `Receive `is blocking, and hence to keep the connection healthy,
+one should always loop around Receive until an `os.EOF` is returned:
 
-## Example: A simple chat server
-
-	package main
-
-	import (
-		"http"
-		"log"
-		"socketio"
-	)
-
-	func main() {
-		sio := socketio.NewSocketIO(nil)
-
-		sio.OnConnect(func(c *socketio.Conn) {
-			sio.Broadcast(struct{ announcement string }{"connected: " + c.String()})
-		})
-
-		sio.OnDisconnect(func(c *socketio.Conn) {
-			sio.BroadcastExcept(c,
-				struct{ announcement string }{"disconnected: " + c.String()})
-		})
-
-		sio.OnMessage(func(c *socketio.Conn, msg socketio.Message) {
-			sio.BroadcastExcept(c,
-				struct{ message []string }{[]string{c.String(), msg.Data()}})
-		})
-
-		mux := sio.ServeMux()
-		mux.Handle("/", http.FileServer("www/", "/"))
-
-		if err := http.ListenAndServe(":8080", mux); err != nil {
-			log.Fatal("ListenAndServe:", err)
+```go
+func (c *socketio.Conn) {
+	var msg socketio.Message
+	for {
+		// I'm a healthy connection, yay
+		if err := c.Receive(&msg); err != nil {
+			return
 		}
 	}
+})
+```
 
-## tl;dr
+The Socket.IO protocol describes to different kind of messages: normal messages and
+so called events. Normal messages contain textual payload, where events contain a
+name and arguments. One could think of events as remote procedure calls.
+When receiving messages, one can use the following pattern to
+determine what the messages actually is:
+
+```go
+func (c *socketio.Conn) {
+	var msg socketio.Message
+	for {
+		if err := c.Receive(&msg); err != nil {
+			return
+		}
+		switch msg.Type() {
+		case socketio.MessageJSON, socketio.MessageText:
+			fmt.Println("this is an ordinary message with payload: ", msg.String())
+		case socketio.MessageEvent:
+			var arg0 string
+			var arg1 int
+			name, _ := msg.Event()
+			msg.ReadArguments(&arg0, &arg1)
+			fmt.Printf("this is an event with name %s. Arguments are arg0=%s, arg1=%d"
+				name, arg0, arg1)
+		}
+	}
+})
+```
+
+### Sending messages
+
+To send messages, the connection exposes two different methods for normal messages and events
+respectively: `Send(interface{})` and `Emit(string, ...interface{})`. Both calls are always
+asynchronous and simply queue the payload to be dispatched when the next suitable moments arrives.
+If the payload is an `string` or a `[]byte` the message will be tagged as `MessageText`, otherwise
+the payload will be marshalled into JSON and tagged as `MessageJSON`. For example:
+
+```go
+func (c *socketio.Conn) {
+	c.Send("text message")
+	c.Send(struct{X string}{"json message"})
+	c.Emit("myevent")
+	c.Emit("myevent", "1st argument", 2, struct{X string}{"third argument"})
+	for {
+		if err := c.Receive(&msg); err != nil {
+			return
+		}
+	}
+})
+```
+
+### Acknowledging message
+
+The protocol also describes acknowledgements. The need for acknowledgements is
+application specific: the sender defines this on per message basis. If the client
+expects an acknowledgement, the message can be acknowledged using the `Reply(*Message, ...interface{})`
+method, which has the same semantics as `Emit`.
+
+```go
+func (c *socketio.Conn) {
+	for {
+		if err := c.Receive(&msg); err != nil {
+			return
+		}
+		c.Reply(&msg, "1st argument", 2)
+	}
+})
+```
+
+## Concrete example: A simple chat server
+
+```go
+package main
+
+import (
+	"http"
+	"socketio"
+)
+
+func main() {
+	sio := socketio.NewServer(nil)
+	http.Handle("/socket.io/", http.StripPrefix("/socket.io",
+		sio.Handler(func(c *socketio.Conn) {
+			sio.Broadcast("connected: " + c.String())
+			defer sio.Broadcast("disconnected: " + c.String())
+			for {
+				if err := c.Receive(&msg); err != nil {
+					return
+				}
+				sio.BroadcastExcept(c, msg.String())
+			}
+		})
+	))
+	if err := http.ListenAndServe(":80", nil); err != nil {
+		panic(err)
+	}
+}
+```
+
+## Getting the code
 
 You can get the code and run the bundled example by following these steps:
 

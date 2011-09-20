@@ -1,155 +1,132 @@
 package socketio
 
 import (
-	"websocket"
-	"io"
 	"bytes"
+	"fmt"
+	"http"
+	"io/ioutil"
 	"os"
-	"strconv"
+	"strings"
+	"sync"
+	"websocket"
 )
 
-// Client is a toy interface.
-type Client interface {
-	io.Closer
-
-	Dial(string, string) os.Error
-	Send(interface{}) os.Error
-	OnDisconnect(func())
-	OnMessage(func(Message))
-	SessionID() SessionID
+type Client struct {
+	buf      bytes.Buffer
+	dec      *Decoder
+	enc      *Encoder
+	sid      string
+	endpoint string
+	ws       *websocket.Conn
+	mutex    sync.Mutex
 }
 
-// WebsocketClient is a toy that implements the Client interface.
-type WebsocketClient struct {
-	connected    bool
-	enc          Encoder
-	dec          Decoder
-	decBuf       bytes.Buffer
-	codec        Codec
-	sessionid    SessionID
-	ws           *websocket.Conn
-	onDisconnect func()
-	onMessage    func(Message)
+func (c *Client) String() string {
+	return c.sid
 }
 
-func NewWebsocketClient(codec Codec) (wc *WebsocketClient) {
-	wc = &WebsocketClient{enc: codec.NewEncoder(), codec: codec}
-	wc.dec = codec.NewDecoder(&wc.decBuf)
-	return
+func (c *Client) Emit(name string, args ...interface{}) os.Error {
+	return c.Send(&event{Name: name, Args: args})
 }
 
-func (wc *WebsocketClient) Dial(rawurl string, origin string) (err os.Error) {
-	var messages []Message
-	var nr int
-
-	if wc.connected {
-		return ErrConnected
-	}
-
-	if wc.ws, err = websocket.Dial(rawurl, "", origin); err != nil {
-		return
-	}
-
-	// read handshake
-	buf := make([]byte, 2048)
-	if nr, err = wc.ws.Read(buf); err != nil {
-		wc.ws.Close()
-		return os.NewError("Dial: " + err.String())
-	}
-	wc.decBuf.Write(buf[0:nr])
-
-	if messages, err = wc.dec.Decode(); err != nil {
-		wc.ws.Close()
-		return os.NewError("Dial: " + err.String())
-	}
-
-	if len(messages) != 1 {
-		wc.ws.Close()
-		return os.NewError("Dial: expected exactly 1 message, but got " + strconv.Itoa(len(messages)))
-	}
-
-	// TODO: Fix me: The original Socket.IO codec does not have a special encoding for handshake
-	// so we should just assume that the first message is the handshake.
-	// The old codec should be gone pretty soon (waiting for 0.7 release) so this might suffice
-	// until then.
-	if _, ok := wc.codec.(SIOCodec); !ok {
-		if messages[0].Type() != MessageHandshake {
-			wc.ws.Close()
-			return os.NewError("Dial: expected handshake, but got " + messages[0].Data())
-		}
-	}
-
-	wc.sessionid = SessionID(messages[0].Data())
-	if wc.sessionid == "" {
-		wc.ws.Close()
-		return os.NewError("Dial: received empty sessionid")
-	}
-
-	wc.connected = true
-
-	go wc.reader()
-	return
-}
-
-func (wc *WebsocketClient) SessionID() SessionID {
-	return wc.sessionid
-}
-
-func (wc *WebsocketClient) reader() {
-	var err os.Error
-	var nr int
-	var messages []Message
-	buf := make([]byte, 2048)
-
-	defer wc.Close()
-
+func (c *Client) Receive(msg *Message) (err os.Error) {
+	var incoming string
 	for {
-		if nr, err = wc.ws.Read(buf); err != nil {
-			return
-		}
-		if nr > 0 {
-			wc.decBuf.Write(buf[0:nr])
-			if messages, err = wc.dec.Decode(); err != nil {
+		if err = c.dec.Decode(msg); err == os.EOF {
+			if err = websocket.Message.Receive(c.ws, &incoming); err != nil {
 				return
 			}
+			c.dec.Write([]byte(incoming))
+			continue
+		} else if err != nil {
+			break
+		}
 
-			for _, msg := range messages {
-				if hb, ok := msg.heartbeat(); ok {
-					if err = wc.Send(heartbeat(hb)); err != nil {
-						return
-					}
-				} else if wc.onMessage != nil {
-					wc.onMessage(msg)
-				}
+		switch msg.typ {
+		case MessageHeartbeat:
+			Log.debug(c, " client: received heartbeat: ", msg.Inspect())
+			c.Send(heartbeat(0))
+
+		case MessageDisconnect:
+			Log.info(c, " client: received disconnect: ", msg.Inspect())
+			c.ws.Close()
+			return os.EOF
+
+		case MessageConnect:
+			Log.debug(c, " client: received connect: ", msg.Inspect())
+			c.endpoint = msg.String()
+
+		case MessageError, MessageACK, MessageNOOP:
+			Log.warn(c, " client: (TODO) ", msg.Inspect())
+
+		case MessageEvent, MessageText, MessageJSON:
+			if msg.id > 0 && !msg.ack {
+				Log.debug(c, " client: automatically acking: ", msg.Inspect())
+				c.Send(&ack{id: msg.id})
 			}
+			return
+
+		default:
+			Log.warn(c, " client: unknown message type: ", msg.Inspect())
 		}
 	}
+
+	c.dec.Reset()
+	return
 }
 
-func (wc *WebsocketClient) OnDisconnect(f func()) {
-	wc.onDisconnect = f
-}
-func (wc *WebsocketClient) OnMessage(f func(Message)) {
-	wc.onMessage = f
+func (c *Client) Reply(m *Message, a ...interface{}) os.Error {
+	ack := &ack{
+		id:   m.id,
+		data: a,
+	}
+	if len(a) > 0 {
+		ack.event = true
+	}
+	return c.Send(ack)
 }
 
-func (wc *WebsocketClient) Send(payload interface{}) os.Error {
-	if wc.ws == nil {
-		return ErrNotConnected
+func (c *Client) Close() os.Error {
+	c.Send(disconnect(""))
+	return c.ws.Close()
+}
+
+func (c *Client) Send(data interface{}) (err os.Error) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.buf.Reset()
+	if err = c.enc.Encode(&c.buf, []interface{}{data}); err != nil {
+		return
+	}
+	return websocket.Message.Send(c.ws, c.buf.String())
+}
+
+func Dial(url_, origin string) (c *Client, err os.Error) {
+	var body []byte
+	var r *http.Response
+
+	if r, err = http.Get(fmt.Sprintf("%s%d", url_, ProtocolVersion)); err != nil {
+		return
+	}
+	defer r.Body.Close()
+	if r.StatusCode != 200 {
+		return nil, os.NewError("invalid status: " + r.Status)
+	}
+	if body, err = ioutil.ReadAll(r.Body); err != nil {
+		return
+	}
+	parts := strings.SplitN(string(body), ":", 4)
+	if len(parts) != 4 {
+		return nil, os.NewError("invalid handshake: " + string(body))
+	}
+	if !strings.Contains(parts[3], "websocket") {
+		return nil, os.NewError("server does not support websockets")
 	}
 
-	return wc.enc.Encode(wc.ws, payload)
-}
-
-func (wc *WebsocketClient) Close() os.Error {
-	if !wc.connected {
-		return ErrNotConnected
-	}
-	wc.connected = false
-
-	if wc.onDisconnect != nil {
-		wc.onDisconnect()
-	}
-
-	return wc.ws.Close()
+	c = &Client{dec: &Decoder{}, enc: &Encoder{}}
+	c.sid = parts[0]
+	wsurl := "ws" + url_[4:]
+	Log.debug("wsurl=", wsurl)
+	c.ws, err = websocket.Dial(fmt.Sprintf("%s%d/websocket/%s", wsurl, ProtocolVersion, c.sid), "", origin)
+	return
 }

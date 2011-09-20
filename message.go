@@ -1,35 +1,53 @@
 package socketio
 
-// The different message types that are available.
-const (
-	// MessageText is interpreted just as a string.
-	MessageText = iota
-
-	// MessageJSON is interpreted as a JSON encoded string.
-	MessageJSON
-
-	// MessageHeartbeat is interpreted as a heartbeat.
-	MessageHeartbeat
-
-	// MessageHeartbeat is interpreted as a heartbeat.
-	MessageHandshake
-
-	// MessageDisconnect is interpreted as a forced disconnection.
-	MessageDisconnect
+import (
+	"bytes"
+	"fmt"
+	"json"
+	"os"
 )
 
-// Heartbeat is a server-invoked keep-alive strategy, where
-// the server sends an integer to the client and the client
-// must respond with the same value during some short period.
-type heartbeat int
+// The different message types that are available.
+const (
+	MessageDisconnect = iota
+	MessageConnect
+	MessageHeartbeat
+	MessageText
+	MessageJSON
+	MessageEvent
+	MessageACK
+	MessageError
+	MessageNOOP
+)
 
-// Disconnect is a message that indicates a forced disconnection.
-type disconnect int
+type disconnect string
 
-// Handshake is the first message that is going to be sent to the
-// client when it first connects. It is made of the server-generated
-// session id.
-type handshake string
+type connect string
+
+type heartbeat byte
+
+type event struct {
+	Args     []interface{} `json:"args,omitempty"`
+	Name     string        `json:"name"`
+	ack      bool
+	endpoint string
+	id       int
+	raw      []byte
+}
+
+type ack struct {
+	data  interface{}
+	event bool
+	id    int
+}
+
+type error struct {
+	advice   int
+	endpoint string
+	reason   int
+}
+
+type noop byte
 
 // Message wraps heartbeat, messageType and data methods.
 //
@@ -37,13 +55,88 @@ type handshake string
 // or if the message does not encapsulate a heartbeat a false is returned.
 // MessageType returns messageText, messageHeartbeat or messageJSON.
 // Data returns the raw (full) message received.
-type Message interface {
-	heartbeat() (heartbeat, bool)
+type Message struct {
+	ack      bool
+	data     []byte
+	endpoint string
+	event    *event
+	id       int
+	typ      uint8
+}
 
-	Annotations() map[string]string
-	Annotation(string) (string, bool)
-	Data() string
-	Bytes() []byte
-	Type() uint8
-	JSON() ([]byte, bool)
+func (m *Message) Event() (string, os.Error) {
+	if m.typ == MessageEvent {
+		if m.event == nil {
+			m.event = &event{}
+		}
+		if err := json.Unmarshal(m.data, m.event); err != nil {
+			return "", err
+		}
+		return m.event.Name, nil
+	}
+	return "", os.NewError("not an event")
+}
+
+func (m *Message) ReadArguments(a ...interface{}) os.Error {
+	if m.typ == MessageEvent {
+		if m.event == nil {
+			m.event = &event{}
+		}
+		m.event.Args = a
+		if err := json.Unmarshal(m.data, m.event); err != nil {
+			return err
+		}
+		return nil
+	}
+	return os.NewError("not an event")
+}
+
+func (m *Message) Bytes() []byte {
+	return m.data
+}
+
+func (m *Message) String() string {
+	return string(m.data)
+}
+
+func (m *Message) Type() uint8 {
+	return m.typ
+}
+
+func (m *Message) Inspect() string {
+	buf := &bytes.Buffer{}
+	buf.WriteString("{type: ")
+	switch m.typ {
+	case 0:
+		fmt.Fprintf(buf, "disconnect, endpoint: %s", m.endpoint)
+	case 1:
+		fmt.Fprintf(buf, "connect, endpoint: %s", m.endpoint)
+	case 2:
+		fmt.Fprintf(buf, "heartbeat")
+	case 3:
+		fmt.Fprintf(buf, "message, id: %d, ack: %t, endpoint: %q, data: %q", m.id, m.ack, m.endpoint, m.data)
+	case 4:
+		fmt.Fprintf(buf, "json message, id: %d, ack: %t, endpoint: %q, data: %q", m.id, m.ack, m.endpoint, m.data)
+	case 5:
+		fmt.Fprintf(buf, "event, id: %d, ack: %t, endpoint: %q, data: %q", m.id, m.ack, m.endpoint, m.data)
+	case 6:
+		fmt.Fprintf(buf, "ack, data: %q", m.data)
+	case 7:
+		fmt.Fprintf(buf, "error, endpoint: %q, data: %q", m.endpoint, m.data)
+	case 8:
+		fmt.Fprintf(buf, "noop")
+	default:
+		fmt.Fprintf(buf, "[unknown]%+v", m)
+	}
+	buf.WriteString("}")
+	return buf.String()
+}
+
+func (m *Message) zero() {
+	m.ack = false
+	m.data = nil
+	m.endpoint = ""
+	m.event = nil
+	m.id = 0
+	m.typ = 0
 }
