@@ -43,9 +43,9 @@ func newConn(server *server) (c *Conn, err os.Error) {
 		dec:        &Decoder{},
 		disconnect: make(chan byte),
 		flush:      make(chan chan os.Error, 1),
-		incoming:   make(chan []byte),
+		incoming:   make(chan []byte, 1),
 		server:     server,
-		shutdown:   make(chan byte),
+		shutdown:   make(chan byte, 1),
 		sid:        sid,
 	}
 
@@ -165,10 +165,20 @@ func (c *Conn) String() string {
 }
 
 func (c *Conn) close() {
-	if c.Send(disconnect("")) == ErrDisconnected {
+	c.mutex.Lock()
+	if c.disconnected {
+		c.mutex.Unlock()
 		return
 	}
-	c.shutdown <- 1
+	c.queue = append(c.queue, disconnect(""))
+	res := make(chan os.Error)
+	c.flush <- res
+	select {
+	case c.shutdown <- 1:
+	default:
+	}
+	c.mutex.Unlock()
+	<-res
 }
 
 func (c *Conn) handle(t *Transport, w http.ResponseWriter, req *http.Request) (err os.Error) {
@@ -228,7 +238,7 @@ func (c *Conn) handle(t *Transport, w http.ResponseWriter, req *http.Request) (e
 func (c *Conn) flusher() {
 	var buf bytes.Buffer
 	var err os.Error
-	enc := &Encoder{}
+	enc := &Encoder{MustFrame: true}
 
 	for res := range c.flush {
 		c.mutex.Lock()
@@ -239,12 +249,18 @@ func (c *Conn) flusher() {
 		socket := c.socket
 		c.mutex.Unlock()
 
-		for {
-			if _, err = buf.WriteTo(socket); err == nil {
-				break
-			} else if err != os.EAGAIN {
-				Log.info(c, " flusher: write error: ", err)
-				break
+		if buf.Len() == 0 {
+			err = nil
+		} else if socket == nil {
+			err = os.EINVAL
+		} else {
+			for {
+				if _, err = buf.WriteTo(socket); err == nil {
+					break
+				} else if err != os.EAGAIN {
+					Log.info(c, " flusher: write error: ", err)
+					break
+				}
 			}
 		}
 		if res != nil {
@@ -288,15 +304,15 @@ func (c *Conn) machine() {
 	defer func() {
 		Log.debug(c, " machine: shutting down")
 		c.mutex.Lock()
-		c.disconnected = true
-		c.online = false
-		c.pendingHeartbeat = false
-		c.socket = nil
 		close(c.connect)
 		close(c.disconnect)
 		close(c.flush)
 		close(c.incoming)
 		close(c.shutdown)
+		c.disconnected = true
+		c.online = false
+		c.pendingHeartbeat = false
+		c.socket = nil
 		c.mutex.Unlock()
 	}()
 
