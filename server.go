@@ -76,7 +76,7 @@ func (s *server) AuthorizedHandler(a func(*http.Request) bool, f func(c *Conn)) 
 			s.serve(w, req, f)
 			return
 		}
-		Log.warnf("%d %s %s unauthorized", http.StatusForbidden, req.Method, req.RawURL)
+		Log.warnf("%d %s %s unauthorized", http.StatusForbidden, req.Method, req.URL.Raw)
 		w.WriteHeader(http.StatusForbidden)
 	})
 }
@@ -93,13 +93,13 @@ func (s *server) serve(w http.ResponseWriter, req *http.Request, f func(c *Conn)
 	l := len(parts)
 
 	if l != 1 && l != 3 {
-		Log.warnf("%d %s %s invalid path", http.StatusBadRequest, req.Method, req.RawURL)
+		Log.warnf("%d %s %s invalid path", http.StatusBadRequest, req.Method, req.URL.Raw)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
 	if protocol, _ := strconv.Atoi(parts[0]); protocol != ProtocolVersion {
-		Log.warnf("%d %s %s protocol version not supported: %s", http.StatusServiceUnavailable, req.Method, req.RawURL, parts[0])
+		Log.warnf("%d %s %s protocol version not supported: %s", http.StatusServiceUnavailable, req.Method, req.URL.Raw, parts[0])
 		http.Error(w, "Protocol version not supported.", http.StatusServiceUnavailable)
 		return
 	}
@@ -108,14 +108,14 @@ func (s *server) serve(w http.ResponseWriter, req *http.Request, f func(c *Conn)
 	case 1:
 		c, err := newConn(s)
 		if err != nil {
-			Log.warnf("%d %s %s unable to create new connection: %s", http.StatusInternalServerError, req.Method, req.RawURL, err)
+			Log.warnf("%d %s %s unable to create new connection: %s", http.StatusInternalServerError, req.Method, req.URL.Raw, err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
 		s.mutex.Lock()
 		if s.sessions[c.sid] != nil {
-			Log.warnf("%d %s %s session id collision", http.StatusInternalServerError, req.Method, req.RawURL, err)
+			Log.warnf("%d %s %s session id collision", http.StatusInternalServerError, req.Method, req.URL.Raw, err)
 			w.WriteHeader(http.StatusInternalServerError)
 			s.mutex.Unlock()
 			return
@@ -125,12 +125,12 @@ func (s *server) serve(w http.ResponseWriter, req *http.Request, f func(c *Conn)
 
 		fmt.Fprintf(w, "%s:%d:%d:%s", c.sid, int(s.config.HeartbeatTimeout/1e9), int(s.config.CloseTimeout/1e9), s.transportNames)
 
-		Log.infof("%d %s %s client %s connected", http.StatusOK, req.Method, req.RawURL, c)
+		Log.infof("%d %s %s client %s connected", http.StatusOK, req.Method, req.URL.Raw, c)
 
 		go func() {
 			f(c)
 			c.close()
-			Log.infof("%d %s %s client %s disconnected", http.StatusOK, req.Method, req.RawURL, c)
+			Log.infof("%d %s %s client %s disconnected", http.StatusOK, req.Method, req.URL.Raw, c)
 		}()
 
 		return
@@ -142,26 +142,26 @@ func (s *server) serve(w http.ResponseWriter, req *http.Request, f func(c *Conn)
 		var t *Transport
 
 		if t = s.transports[transport]; t == nil {
-			Log.warnf("%d %s %s unknown transport: %s", http.StatusServiceUnavailable, req.Method, req.RawURL, transport)
+			Log.warnf("%d %s %s unknown transport: %s", http.StatusServiceUnavailable, req.Method, req.URL.Raw, transport)
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 
 		s.mutex.Lock()
 		if c = s.sessions[sid]; c == nil {
-			Log.warnf("%d %s %s bad session id: %s", http.StatusInternalServerError, req.Method, req.RawURL, sid)
+			Log.warnf("%d %s %s bad session id: %s", http.StatusInternalServerError, req.Method, req.URL.Raw, sid)
 			w.WriteHeader(http.StatusInternalServerError)
 			s.mutex.Unlock()
 			return
 		}
 		s.mutex.Unlock()
 
-		Log.debugf("%d %s %s client %s opening transport %s", http.StatusOK, req.Method, req.RawURL, c, transport)
+		Log.debugf("%d %s %s client %s opening transport %s", http.StatusOK, req.Method, req.URL.Raw, c, transport)
 		if err := c.handle(t, w, req); err != nil {
-			Log.warnf("%d %s %s client %s unable to open transport %s: %s", http.StatusServiceUnavailable, req.Method, req.RawURL, c, transport, err)
+			Log.warnf("%d %s %s client %s unable to open transport %s: %s", http.StatusServiceUnavailable, req.Method, req.URL.Raw, c, transport, err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		Log.debugf("%d %s %s client %s closed transport %s", http.StatusOK, req.Method, req.RawURL, c, transport)
+		Log.debugf("%d %s %s client %s closed transport %s", http.StatusOK, req.Method, req.URL.Raw, c, transport)
 	}
 }
