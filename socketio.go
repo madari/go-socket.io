@@ -201,7 +201,7 @@ func (sio *SocketIO) handle(t Transport, w http.ResponseWriter, req *http.Reques
 
 	// we should now have a connection
 	if c == nil {
-		sio.Log("sio/handle: unable to map request to connection:", req.RawURL)
+		sio.Log("sio/handle: unable to map request to connection:", req.URL.Raw)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
