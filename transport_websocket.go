@@ -1,12 +1,12 @@
 package socketio
 
 import (
-	"http"
-	"os"
+	"errors"
+	"net/http"
 	"websocket"
 )
 
-var errWebsocketHandshake = os.NewError("websocket handshake error")
+var errWebsocketHandshake = errors.New("websocket handshake error")
 
 // The websocket transport.
 type websocketTransport struct {
@@ -51,7 +51,7 @@ func (s *websocketSocket) String() string {
 // proceed if succesfull.
 //
 // TODO: Remove the ugly channels and timeouts. They should not be needed!
-func (s *websocketSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err os.Error) {
+func (s *websocketSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err error) {
 	if s.connected {
 		return ErrConnected
 	}
@@ -76,7 +76,7 @@ func (s *websocketSocket) accept(w http.ResponseWriter, req *http.Request, proce
 	return
 }
 
-func (s *websocketSocket) Read(p []byte) (int, os.Error) {
+func (s *websocketSocket) Read(p []byte) (int, error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -84,7 +84,7 @@ func (s *websocketSocket) Read(p []byte) (int, os.Error) {
 	return s.ws.Read(p)
 }
 
-func (s *websocketSocket) Write(p []byte) (int, os.Error) {
+func (s *websocketSocket) Write(p []byte) (int, error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -92,7 +92,7 @@ func (s *websocketSocket) Write(p []byte) (int, os.Error) {
 	return s.ws.Write(p)
 }
 
-func (s *websocketSocket) Close() os.Error {
+func (s *websocketSocket) Close() error {
 	if !s.connected {
 		return ErrNotConnected
 	}

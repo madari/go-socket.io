@@ -3,13 +3,13 @@ package socketio
 import (
 	"bytes"
 	"fmt"
-	"http"
 	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
-	"url"
 )
 
 // SocketIO handles transport abstraction and provide the user
@@ -91,7 +91,7 @@ func (sio *SocketIO) ServeMux() *ServeMux {
 
 // OnConnect sets f to be invoked when a new session is established. It passes
 // the established connection as an argument to the callback.
-func (sio *SocketIO) OnConnect(f func(*Conn)) os.Error {
+func (sio *SocketIO) OnConnect(f func(*Conn)) error {
 	sio.callbacks.onConnect = f
 	return nil
 }
@@ -99,7 +99,7 @@ func (sio *SocketIO) OnConnect(f func(*Conn)) os.Error {
 // OnDisconnect sets f to be invoked when a session is considered to be lost. It passes
 // the established connection as an argument to the callback. After disconnection
 // the connection is considered to be destroyed, and it should not be used anymore.
-func (sio *SocketIO) OnDisconnect(f func(*Conn)) os.Error {
+func (sio *SocketIO) OnDisconnect(f func(*Conn)) error {
 	sio.callbacks.onDisconnect = f
 	return nil
 }
@@ -107,7 +107,7 @@ func (sio *SocketIO) OnDisconnect(f func(*Conn)) os.Error {
 // OnMessage sets f to be invoked when a message arrives. It passes
 // the established connection along with the received message as arguments
 // to the callback.
-func (sio *SocketIO) OnMessage(f func(*Conn, Message)) os.Error {
+func (sio *SocketIO) OnMessage(f func(*Conn, Message)) error {
 	sio.callbacks.onMessage = f
 	return nil
 }
@@ -116,7 +116,7 @@ func (sio *SocketIO) OnMessage(f func(*Conn, Message)) os.Error {
 // the http.Request as an argument to the callback.
 // The callback should return true if the connection is authorized or false if it
 // should be dropped. Not setting this callback results in a default pass-through.
-func (sio *SocketIO) SetAuthorization(f func(*http.Request) bool) os.Error {
+func (sio *SocketIO) SetAuthorization(f func(*http.Request) bool) error {
 	sio.callbacks.isAuthorized = f
 	return nil
 }
@@ -145,7 +145,7 @@ func (sio *SocketIO) Logf(format string, v ...interface{}) {
 func (sio *SocketIO) handle(t Transport, w http.ResponseWriter, req *http.Request) {
 	var parts []string
 	var c *Conn
-	var err os.Error
+	var err error
 
 	if !sio.isAuthorized(req) {
 		sio.Log("sio/handle: unauthorized request:", req)
@@ -230,7 +230,7 @@ func (sio *SocketIO) onConnect(c *Conn) {
 // to be lost. It removes the connection and calls the user's OnDisconnect callback.
 func (sio *SocketIO) onDisconnect(c *Conn) {
 	sio.sessionsLock.Lock()
-	sio.sessions[c.sessionid] = nil, false
+	delete(sio.sessions, c.sessionid)
 	sio.sessionsLock.Unlock()
 
 	if sio.callbacks.onDisconnect != nil {
@@ -326,7 +326,7 @@ func (sio *SocketIO) generatePolicyFile() []byte {
 	return buf.Bytes()
 }
 
-func (sio *SocketIO) ListenAndServeFlashPolicy(laddr string) os.Error {
+func (sio *SocketIO) ListenAndServeFlashPolicy(laddr string) error {
 	var listener net.Listener
 
 	listener, err := net.Listen("tcp", laddr)

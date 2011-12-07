@@ -1,19 +1,19 @@
 package socketio
 
 import (
-	"websocket"
-	"io"
 	"bytes"
-	"os"
+	"errors"
+	"io"
 	"strconv"
+	"websocket"
 )
 
 // Client is a toy interface.
 type Client interface {
 	io.Closer
 
-	Dial(string, string) os.Error
-	Send(interface{}) os.Error
+	Dial(string, string) error
+	Send(interface{}) error
 	OnDisconnect(func())
 	OnMessage(func(Message))
 	SessionID() SessionID
@@ -38,7 +38,7 @@ func NewWebsocketClient(codec Codec) (wc *WebsocketClient) {
 	return
 }
 
-func (wc *WebsocketClient) Dial(rawurl string, origin string) (err os.Error) {
+func (wc *WebsocketClient) Dial(rawurl string, origin string) (err error) {
 	var messages []Message
 	var nr int
 
@@ -54,18 +54,18 @@ func (wc *WebsocketClient) Dial(rawurl string, origin string) (err os.Error) {
 	buf := make([]byte, 2048)
 	if nr, err = wc.ws.Read(buf); err != nil {
 		wc.ws.Close()
-		return os.NewError("Dial: " + err.String())
+		return errors.New("Dial: " + err.Error())
 	}
 	wc.decBuf.Write(buf[0:nr])
 
 	if messages, err = wc.dec.Decode(); err != nil {
 		wc.ws.Close()
-		return os.NewError("Dial: " + err.String())
+		return errors.New("Dial: " + err.Error())
 	}
 
 	if len(messages) != 1 {
 		wc.ws.Close()
-		return os.NewError("Dial: expected exactly 1 message, but got " + strconv.Itoa(len(messages)))
+		return errors.New("Dial: expected exactly 1 message, but got " + strconv.Itoa(len(messages)))
 	}
 
 	// TODO: Fix me: The original Socket.IO codec does not have a special encoding for handshake
@@ -75,14 +75,14 @@ func (wc *WebsocketClient) Dial(rawurl string, origin string) (err os.Error) {
 	if _, ok := wc.codec.(SIOCodec); !ok {
 		if messages[0].Type() != MessageHandshake {
 			wc.ws.Close()
-			return os.NewError("Dial: expected handshake, but got " + messages[0].Data())
+			return errors.New("Dial: expected handshake, but got " + messages[0].Data())
 		}
 	}
 
 	wc.sessionid = SessionID(messages[0].Data())
 	if wc.sessionid == "" {
 		wc.ws.Close()
-		return os.NewError("Dial: received empty sessionid")
+		return errors.New("Dial: received empty sessionid")
 	}
 
 	wc.connected = true
@@ -96,7 +96,7 @@ func (wc *WebsocketClient) SessionID() SessionID {
 }
 
 func (wc *WebsocketClient) reader() {
-	var err os.Error
+	var err error
 	var nr int
 	var messages []Message
 	buf := make([]byte, 2048)
@@ -133,7 +133,7 @@ func (wc *WebsocketClient) OnMessage(f func(Message)) {
 	wc.onMessage = f
 }
 
-func (wc *WebsocketClient) Send(payload interface{}) os.Error {
+func (wc *WebsocketClient) Send(payload interface{}) error {
 	if wc.ws == nil {
 		return ErrNotConnected
 	}
@@ -141,7 +141,7 @@ func (wc *WebsocketClient) Send(payload interface{}) os.Error {
 	return wc.enc.Encode(wc.ws, payload)
 }
 
-func (wc *WebsocketClient) Close() os.Error {
+func (wc *WebsocketClient) Close() error {
 	if !wc.connected {
 		return ErrNotConnected
 	}

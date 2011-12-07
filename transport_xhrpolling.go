@@ -1,12 +1,11 @@
 package socketio
 
 import (
-	"http"
 	"bytes"
-	"os"
+	"fmt"
 	"io"
 	"net"
-	"fmt"
+	"net/http"
 )
 
 // The xhr-polling transport.
@@ -50,7 +49,7 @@ func (s *xhrPollingSocket) Transport() Transport {
 
 // Accepts a http connection & request pair. It hijacks the connection and calls
 // proceed if succesfull.
-func (s *xhrPollingSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err os.Error) {
+func (s *xhrPollingSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err error) {
 	if s.connected {
 		return ErrConnected
 	}
@@ -66,7 +65,7 @@ func (s *xhrPollingSocket) accept(w http.ResponseWriter, req *http.Request, proc
 	return
 }
 
-func (s *xhrPollingSocket) Read(p []byte) (int, os.Error) {
+func (s *xhrPollingSocket) Read(p []byte) (int, error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -75,7 +74,7 @@ func (s *xhrPollingSocket) Read(p []byte) (int, os.Error) {
 }
 
 // Write sends a single message to the wire and closes the connection.
-func (s *xhrPollingSocket) Write(p []byte) (int, os.Error) {
+func (s *xhrPollingSocket) Write(p []byte) (int, error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -100,7 +99,7 @@ func (s *xhrPollingSocket) Write(p []byte) (int, os.Error) {
 	return int(nr), err
 }
 
-func (s *xhrPollingSocket) Close() os.Error {
+func (s *xhrPollingSocket) Close() error {
 	if !s.connected {
 		return ErrNotConnected
 	}

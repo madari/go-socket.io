@@ -1,12 +1,11 @@
 package socketio
 
 import (
-	"http"
-	"os"
-	"io"
 	"bytes"
-	"net"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 )
 
 // The xhr-multipart transport.
@@ -49,7 +48,7 @@ func (s *xhrMultipartSocket) Transport() Transport {
 
 // Accepts a http connection & request pair. It hijacks the connection, sends headers and calls
 // proceed if succesfull.
-func (s *xhrMultipartSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err os.Error) {
+func (s *xhrMultipartSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err error) {
 	if s.connected {
 		return ErrConnected
 	}
@@ -84,7 +83,7 @@ func (s *xhrMultipartSocket) accept(w http.ResponseWriter, req *http.Request, pr
 	return
 }
 
-func (s *xhrMultipartSocket) Read(p []byte) (n int, err os.Error) {
+func (s *xhrMultipartSocket) Read(p []byte) (n int, err error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -93,7 +92,7 @@ func (s *xhrMultipartSocket) Read(p []byte) (n int, err os.Error) {
 }
 
 // Write sends a single multipart message to the wire.
-func (s *xhrMultipartSocket) Write(p []byte) (n int, err os.Error) {
+func (s *xhrMultipartSocket) Write(p []byte) (n int, err error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -101,7 +100,7 @@ func (s *xhrMultipartSocket) Write(p []byte) (n int, err os.Error) {
 	return fmt.Fprintf(s.rwc, "Content-Type: text/plain\r\n\r\n%s\n--socketio\n", p)
 }
 
-func (s *xhrMultipartSocket) Close() os.Error {
+func (s *xhrMultipartSocket) Close() error {
 	if !s.connected {
 		return ErrNotConnected
 	}

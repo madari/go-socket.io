@@ -1,10 +1,10 @@
 package socketio
 
 import (
-	"http"
+	"fmt"
+	"net/http"
 	"testing"
 	"time"
-	"fmt"
 )
 
 const (
@@ -48,7 +48,6 @@ func echoServer(addr string, config *Config) <-chan *event {
 
 	return events
 }
-
 
 func TestWebsocket(t *testing.T) {
 	finished := make(chan bool, 1)

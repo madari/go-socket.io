@@ -1,14 +1,13 @@
 package socketio
 
 import (
-	"http"
-	"os"
-	"io"
 	"bytes"
-	"strings"
-	"json"
-	"net"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strings"
 )
 
 var htmlfileHeader = "<html><body>" + strings.Repeat(" ", 244)
@@ -53,7 +52,7 @@ func (s *htmlfileSocket) Transport() Transport {
 
 // Accepts a http connection & request pair. It hijacks the connection, sends headers and calls
 // proceed if succesfull.
-func (s *htmlfileSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err os.Error) {
+func (s *htmlfileSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err error) {
 	if s.connected {
 		return ErrConnected
 	}
@@ -86,7 +85,7 @@ func (s *htmlfileSocket) accept(w http.ResponseWriter, req *http.Request, procee
 	return
 }
 
-func (s *htmlfileSocket) Read(p []byte) (n int, err os.Error) {
+func (s *htmlfileSocket) Read(p []byte) (n int, err error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -94,9 +93,8 @@ func (s *htmlfileSocket) Read(p []byte) (n int, err os.Error) {
 	return s.rwc.Read(p)
 }
 
-
 // Write sends a single multipart message to the wire.
-func (s *htmlfileSocket) Write(p []byte) (n int, err os.Error) {
+func (s *htmlfileSocket) Write(p []byte) (n int, err error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -111,7 +109,7 @@ func (s *htmlfileSocket) Write(p []byte) (n int, err os.Error) {
 	return fmt.Fprintf(s.rwc, "%x\r\n%s\r\n", buf.Len(), buf.String())
 }
 
-func (s *htmlfileSocket) Close() os.Error {
+func (s *htmlfileSocket) Close() error {
 	if !s.connected {
 		return ErrNotConnected
 	}

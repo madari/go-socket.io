@@ -1,9 +1,8 @@
 package socketio
 
 import (
-	"io"
 	"crypto/rand"
-	"os"
+	"io"
 )
 
 // SessionID is just a string for now.
@@ -19,7 +18,7 @@ const (
 
 // NewSessionID creates a new ~random session id that is SessionIDLength long and
 // consists of random characters from the SessionIDCharset.
-func NewSessionID() (sid SessionID, err os.Error) {
+func NewSessionID() (sid SessionID, err error) {
 	b := make([]byte, SessionIDLength)
 
 	if _, err = io.ReadFull(rand.Reader, b); err != nil {

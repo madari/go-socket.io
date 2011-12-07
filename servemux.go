@@ -1,8 +1,8 @@
 package socketio
 
 import (
+	"net/http"
 	"strings"
-	"http"
 )
 
 type ServeMux struct {
