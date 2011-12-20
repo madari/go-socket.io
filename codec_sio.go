@@ -205,7 +205,7 @@ func (dec *sioDecoder) Reset() {
 
 func (dec *sioDecoder) Decode() (messages []Message, err error) {
 	messages = make([]Message, 0, 1)
-	var c int
+	var c rune
 
 L:
 	for {
