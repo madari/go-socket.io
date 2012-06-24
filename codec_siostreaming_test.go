@@ -1,28 +1,26 @@
 package socketio
 
 import (
-	"testing"
-	"utf8"
-	"fmt"
 	"bytes"
+	"fmt"
+	"testing"
+	"unicode/utf8"
 	"unsafe"
-	"os"
 )
 
 func streamingFrame(data string, typ int, json bool) string {
-	utf8str := utf8.NewString(data)
 	switch typ {
 	case 0:
 		return "0:0:,"
 
 	case 2, 3:
-		return fmt.Sprintf("%d:%d:%s,", typ, utf8str.RuneCount(), data)
+		return fmt.Sprintf("%d:%d:%s,", typ, utf8.RuneCountInString(data), data)
 	}
 
 	if json {
-		return fmt.Sprintf("%d:%d:j\n:%s,", typ, 3+utf8str.RuneCount(), data)
+		return fmt.Sprintf("%d:%d:j\n:%s,", typ, 3+utf8.RuneCountInString(data), data)
 	}
-	return fmt.Sprintf("%d:%d::%s,", typ, 1+utf8str.RuneCount(), data)
+	return fmt.Sprintf("%d:%d::%s,", typ, 1+utf8.RuneCountInString(data), data)
 }
 
 type streamingEncodeTest struct {
@@ -76,7 +74,6 @@ var streamingEncodeTests = []streamingEncodeTest{
 		streamingFrame("hello, world", 1, false),
 	},
 }
-
 
 type streamingDecodeTestMessage struct {
 	messageType uint8
@@ -148,7 +145,7 @@ func TestStreamingDecode(t *testing.T) {
 	buf := new(bytes.Buffer)
 	dec := codec.NewDecoder(buf)
 	var messages []Message
-	var err os.Error
+	var err error
 
 	for _, test := range streamingDecodeTests {
 		t.Logf("in=%s out=%v", test.in, test.out)
@@ -185,7 +182,7 @@ func TestStreamingDecode(t *testing.T) {
 
 func TestStreamingDecodeStreaming(t *testing.T) {
 	var messages []Message
-	var err os.Error
+	var err error
 	codec := SIOStreamingCodec{}
 	buf := new(bytes.Buffer)
 	dec := codec.NewDecoder(buf)

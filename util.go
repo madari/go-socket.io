@@ -7,7 +7,7 @@ import (
 
 type nopWriter struct{}
 
-func (nw nopWriter) Write(p []byte) (n int, err os.Error) {
+func (nw nopWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 

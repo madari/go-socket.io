@@ -1,20 +1,20 @@
 package socketio
 
 import (
+	"errors"
 	"fmt"
-	"http"
 	"io"
-	"os"
+	"net/http"
 )
 
 var (
 	// ErrNotConnected is used when some action required the connection to be online,
 	// but it wasn't.
-	ErrNotConnected = os.NewError("not connected")
+	ErrNotConnected = errors.New("not connected")
 
 	// ErrConnected is used when some action required the connection to be offline,
 	// but it wasn't.
-	ErrConnected = os.NewError("already connected")
+	ErrConnected = errors.New("already connected")
 
 	emptyResponse = []byte{}
 	okResponse    = []byte("ok")
@@ -53,5 +53,5 @@ type socket interface {
 	fmt.Stringer
 
 	Transport() Transport
-	accept(http.ResponseWriter, *http.Request, func()) os.Error
+	accept(http.ResponseWriter, *http.Request, func()) error
 }

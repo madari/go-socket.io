@@ -1,19 +1,17 @@
 package socketio
 
 import (
-	"testing"
-	"utf8"
-	"fmt"
 	"bytes"
-	"os"
+	"fmt"
+	"testing"
+	"unicode/utf8"
 )
 
 func frame(data string, json bool) string {
-	utf8str := utf8.NewString(data)
 	if json {
-		return fmt.Sprintf("~m~%d~m~~j~%s", 3+utf8str.RuneCount(), data)
+		return fmt.Sprintf("~m~%d~m~~j~%s", 3+utf8.RuneCountInString(data), data)
 	}
-	return fmt.Sprintf("~m~%d~m~%s", utf8str.RuneCount(), data)
+	return fmt.Sprintf("~m~%d~m~%s", utf8.RuneCountInString(data), data)
 }
 
 type encodeTest struct {
@@ -67,7 +65,6 @@ var encodeTests = []encodeTest{
 		frame("hello, world", false),
 	},
 }
-
 
 type decodeTestMessage struct {
 	messageType uint8
@@ -139,7 +136,7 @@ func TestDecode(t *testing.T) {
 	buf := new(bytes.Buffer)
 	dec := codec.NewDecoder(buf)
 	var messages []Message
-	var err os.Error
+	var err error
 
 	for _, test := range decodeTests {
 		t.Logf("in=%s out=%v", test.in, test.out)
@@ -176,7 +173,7 @@ func TestDecode(t *testing.T) {
 
 func TestDecodeStreaming(t *testing.T) {
 	var messages []Message
-	var err os.Error
+	var err error
 	codec := SIOCodec{}
 	buf := new(bytes.Buffer)
 	dec := codec.NewDecoder(buf)

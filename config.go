@@ -1,6 +1,9 @@
 package socketio
 
-import "log"
+import (
+	"log"
+	"time"
+)
 
 // Config represents a set of configurable settings used by the server
 type Config struct {
@@ -16,11 +19,11 @@ type Config struct {
 	ReadBufferSize int
 
 	// The interval between heartbeats
-	HeartbeatInterval int64
+	HeartbeatInterval time.Duration
 
 	// Period in ns during which the client must reconnect or it is considered
 	// disconnected.
-	ReconnectTimeout int64
+	ReconnectTimeout time.Duration
 
 	// Origins to allow for cross-domain requests.
 	// For example: ["localhost:8080", "myblog.com:*"].

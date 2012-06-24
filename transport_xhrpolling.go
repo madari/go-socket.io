@@ -1,22 +1,22 @@
 package socketio
 
 import (
-	"http"
 	"bytes"
-	"os"
+	"fmt"
 	"io"
 	"net"
-	"fmt"
+	"net/http"
+	"time"
 )
 
 // The xhr-polling transport.
 type xhrPollingTransport struct {
-	rtimeout int64 // The period during which the client must send a message.
-	wtimeout int64 // The period during which a write must succeed.
+	rtimeout time.Duration // The period during which the client must send a message.
+	wtimeout time.Duration // The period during which a write must succeed.
 }
 
 // Creates a new xhr-polling transport with the given read and write timeouts.
-func NewXHRPollingTransport(rtimeout, wtimeout int64) Transport {
+func NewXHRPollingTransport(rtimeout, wtimeout time.Duration) Transport {
 	return &xhrPollingTransport{rtimeout, wtimeout}
 }
 
@@ -50,7 +50,7 @@ func (s *xhrPollingSocket) Transport() Transport {
 
 // Accepts a http connection & request pair. It hijacks the connection and calls
 // proceed if succesfull.
-func (s *xhrPollingSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err os.Error) {
+func (s *xhrPollingSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err error) {
 	if s.connected {
 		return ErrConnected
 	}
@@ -58,15 +58,19 @@ func (s *xhrPollingSocket) accept(w http.ResponseWriter, req *http.Request, proc
 	s.req = req
 	s.rwc, _, err = w.(http.Hijacker).Hijack()
 	if err == nil {
-		s.rwc.(*net.TCPConn).SetReadTimeout(s.t.rtimeout)
-		s.rwc.(*net.TCPConn).SetWriteTimeout(s.t.wtimeout)
+		if s.t.rtimeout != 0 {
+			s.rwc.(*net.TCPConn).SetReadDeadline(time.Now().Add(s.t.rtimeout))
+		}
+		if s.t.wtimeout != 0 {
+			s.rwc.(*net.TCPConn).SetWriteDeadline(time.Now().Add(s.t.wtimeout))
+		}
 		s.connected = true
 		proceed()
 	}
 	return
 }
 
-func (s *xhrPollingSocket) Read(p []byte) (int, os.Error) {
+func (s *xhrPollingSocket) Read(p []byte) (int, error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -75,7 +79,7 @@ func (s *xhrPollingSocket) Read(p []byte) (int, os.Error) {
 }
 
 // Write sends a single message to the wire and closes the connection.
-func (s *xhrPollingSocket) Write(p []byte) (int, os.Error) {
+func (s *xhrPollingSocket) Write(p []byte) (int, error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -100,7 +104,7 @@ func (s *xhrPollingSocket) Write(p []byte) (int, os.Error) {
 	return int(nr), err
 }
 
-func (s *xhrPollingSocket) Close() os.Error {
+func (s *xhrPollingSocket) Close() error {
 	if !s.connected {
 		return ErrNotConnected
 	}

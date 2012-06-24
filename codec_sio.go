@@ -2,12 +2,12 @@ package socketio
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"json"
-	"os"
 	"strconv"
-	"utf8"
+	"unicode/utf8"
 )
 
 // The various delimiters used for framing in the socket.io protocol.
@@ -118,7 +118,7 @@ func (sc SIOCodec) NewEncoder() Encoder {
 // of the following: a heartbeat, a handshake, []byte, string, int or anything
 // than can be marshalled by the default json package. If payload can't be
 // encoded or the writing fails, an error will be returned.
-func (enc *sioEncoder) Encode(dst io.Writer, payload interface{}) (err os.Error) {
+func (enc *sioEncoder) Encode(dst io.Writer, payload interface{}) (err error) {
 	enc.elem.Reset()
 
 	switch t := payload.(type) {
@@ -203,9 +203,9 @@ func (dec *sioDecoder) Reset() {
 	dec.length = 0
 }
 
-func (dec *sioDecoder) Decode() (messages []Message, err os.Error) {
+func (dec *sioDecoder) Decode() (messages []Message, err error) {
 	messages = make([]Message, 0, 1)
-	var c int
+	var c rune
 
 L:
 	for {
@@ -226,7 +226,7 @@ L:
 			if dec.buf.Len() == len(sioFrameDelim) {
 				if !bytes.Equal(dec.buf.Bytes(), sioFrameDelim) {
 					dec.Reset()
-					return nil, os.NewError("Malformed header")
+					return nil, errors.New("Malformed header")
 				}
 
 				dec.state = sioDecodeStateLength
@@ -257,7 +257,7 @@ L:
 
 			if !bytes.Equal(dec.buf.Bytes(), sioFrameDelim) {
 				dec.Reset()
-				return nil, os.NewError("Malformed header")
+				return nil, errors.New("Malformed header")
 			}
 
 			dec.state = sioDecodeStateData
@@ -272,15 +272,23 @@ L:
 				dec.buf.WriteRune(c)
 				dec.length--
 
-				utf8str := utf8.NewString(dec.src.String())
+				utf8str := dec.src.String()
 
-				if utf8str.RuneCount() >= dec.length {
-					str := utf8str.Slice(0, dec.length)
-					dec.buf.WriteString(str)
-					dec.src.Next(len(str))
-					dec.length = 0
-				} else {
-					break L
+				if dec.length > 0 {
+					if utf8.RuneCountInString(utf8str) >= dec.length {
+						buf := make([]byte, 4)
+						for _, r := range utf8str {
+							s := utf8.EncodeRune(buf, r)
+							dec.buf.Write(buf[:s])
+							dec.src.Next(s)
+							dec.length--
+							if dec.length == 0 {
+								break
+							}
+						}
+					} else {
+						break L
+					}
 				}
 			}
 
@@ -308,7 +316,7 @@ L:
 		dec.buf.WriteRune(c)
 	}
 
-	if err == os.EOF {
+	if err == io.EOF {
 		err = nil
 	}
 

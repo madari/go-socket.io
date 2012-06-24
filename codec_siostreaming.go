@@ -2,12 +2,12 @@ package socketio
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"json"
-	"os"
 	"strconv"
-	"utf8"
+	"unicode/utf8"
 )
 
 // SIOStreamingCodec is the codec used by the official Socket.IO client by LearnBoost
@@ -26,7 +26,7 @@ func (sc SIOStreamingCodec) NewEncoder() Encoder {
 // of the following: a heartbeat, a handshake, []byte, string, int or anything
 // than can be marshalled by the default json package. If payload can't be
 // encoded or the writing fails, an error will be returned.
-func (enc *sioStreamingEncoder) Encode(dst io.Writer, payload interface{}) (err os.Error) {
+func (enc *sioStreamingEncoder) Encode(dst io.Writer, payload interface{}) (err error) {
 	enc.elem.Reset()
 
 	switch t := payload.(type) {
@@ -115,10 +115,10 @@ func (dec *sioStreamingDecoder) Reset() {
 	dec.length = 0
 }
 
-func (dec *sioStreamingDecoder) Decode() (messages []Message, err os.Error) {
+func (dec *sioStreamingDecoder) Decode() (messages []Message, err error) {
 	messages = make([]Message, 0, 1)
-	var c int
-	var typ uint
+	var c rune
+	var typ uint64
 
 L:
 	for {
@@ -136,7 +136,7 @@ L:
 		switch dec.state {
 		case sioStreamingDecodeStateType:
 			if c == ':' {
-				if typ, err = strconv.Atoui(dec.buf.String()); err != nil {
+				if typ, err = strconv.ParseUint(dec.buf.String(), 10, 0); err != nil {
 					dec.Reset()
 					return nil, err
 				}
@@ -186,7 +186,7 @@ L:
 			case '\n':
 				if dec.buf.Len() == 0 {
 					dec.Reset()
-					return nil, os.NewError("expecting key, but got...")
+					return nil, errors.New("expecting key, but got...")
 				}
 				dec.key = dec.buf.String()
 				if dec.msg.annotations == nil {
@@ -220,19 +220,29 @@ L:
 			}
 
 		case sioStreamingDecodeStateData:
+			used := false
 			if dec.length > 0 {
 				dec.buf.WriteRune(c)
 				dec.length--
+				used = true
 
-				utf8str := utf8.NewString(dec.src.String())
-				if utf8str.RuneCount() >= dec.length {
-					str := utf8str.Slice(0, dec.length)
-					dec.buf.WriteString(str)
-					dec.src.Next(len(str))
-					dec.length = 0
-					continue
-				} else {
-					break L
+				if dec.length > 0 {
+					utf8str := dec.src.String()
+					if utf8.RuneCountInString(utf8str) >= dec.length {
+						buf := make([]byte, 4)
+						for _, r := range utf8str {
+							size := utf8.EncodeRune(buf, r)
+							dec.buf.Write(buf[:size])
+							dec.src.Next(size)
+							dec.length--
+							if dec.length == 0 {
+								break
+							}
+						}
+						continue
+					} else {
+						break L
+					}
 				}
 			}
 
@@ -242,6 +252,9 @@ L:
 
 			dec.buf.Reset()
 			dec.state = sioStreamingDecodeStateTrailer
+			if used {
+				continue
+			}
 			fallthrough
 
 		case sioStreamingDecodeStateTrailer:
@@ -251,14 +264,14 @@ L:
 				continue
 			} else {
 				dec.Reset()
-				return nil, os.NewError("Expecting trailer but got... " + string(c))
+				return nil, errors.New("Expecting trailer but got... " + string(c))
 			}
 		}
 
 		dec.buf.WriteRune(c)
 	}
 
-	if err == os.EOF {
+	if err == io.EOF {
 		err = nil
 	}
 

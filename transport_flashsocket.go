@@ -1,8 +1,8 @@
 package socketio
 
 import (
-	"http"
-	"os"
+	"net/http"
+	"time"
 )
 
 // The flashsocket transport.
@@ -11,7 +11,7 @@ type flashsocketTransport struct {
 }
 
 // Creates a new flashsocket transport with the given read and write timeouts.
-func NewFlashsocketTransport(rtimeout, wtimeout int64) Transport {
+func NewFlashsocketTransport(rtimeout, wtimeout time.Duration) Transport {
 	return &flashsocketTransport{&websocketTransport{rtimeout, wtimeout}}
 }
 
@@ -45,18 +45,18 @@ func (s *flashsocketSocket) String() string {
 // proceed if succesfull.
 //
 // TODO: Remove the ugly channels and timeouts. They should not be needed!
-func (s *flashsocketSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err os.Error) {
+func (s *flashsocketSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err error) {
 	return s.s.accept(w, req, proceed)
 }
 
-func (s *flashsocketSocket) Read(p []byte) (int, os.Error) {
+func (s *flashsocketSocket) Read(p []byte) (int, error) {
 	return s.s.Read(p)
 }
 
-func (s *flashsocketSocket) Write(p []byte) (int, os.Error) {
+func (s *flashsocketSocket) Write(p []byte) (int, error) {
 	return s.s.Write(p)
 }
 
-func (s *flashsocketSocket) Close() os.Error {
+func (s *flashsocketSocket) Close() error {
 	return s.s.Close()
 }

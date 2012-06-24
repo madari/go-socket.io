@@ -1,13 +1,12 @@
 package socketio
 
 import (
-	"http"
-	"os"
-	"io"
-	"net"
-	"strconv"
-	"json"
+	"encoding/json"
 	"fmt"
+	"io"
+	//	"net"
+	"net/http"
+	"strconv"
 )
 
 // The jsonp-polling transport.
@@ -51,15 +50,15 @@ func (s *jsonpPollingSocket) Transport() Transport {
 
 // Accepts a http connection & request pair. It hijacks the connection and calls
 // proceed if succesfull.
-func (s *jsonpPollingSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err os.Error) {
+func (s *jsonpPollingSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err error) {
 	if s.connected {
 		return ErrConnected
 	}
 
 	rwc, _, err := w.(http.Hijacker).Hijack()
 	if err == nil {
-		rwc.(*net.TCPConn).SetReadTimeout(s.t.rtimeout)
-		rwc.(*net.TCPConn).SetWriteTimeout(s.t.wtimeout)
+		//		rwc.(*net.TCPConn).SetReadDeadline(s.t.rtimeout)
+		//		rwc.(*net.TCPConn).SetWriteDeadline(s.t.wtimeout)
 		s.rwc = rwc
 		s.connected = true
 		s.index = 0
@@ -73,7 +72,7 @@ func (s *jsonpPollingSocket) accept(w http.ResponseWriter, req *http.Request, pr
 	return
 }
 
-func (s *jsonpPollingSocket) Read(p []byte) (n int, err os.Error) {
+func (s *jsonpPollingSocket) Read(p []byte) (n int, err error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -82,7 +81,7 @@ func (s *jsonpPollingSocket) Read(p []byte) (n int, err os.Error) {
 }
 
 // Write sends a single message to the wire and closes the connection.
-func (s *jsonpPollingSocket) Write(p []byte) (n int, err os.Error) {
+func (s *jsonpPollingSocket) Write(p []byte) (n int, err error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -100,7 +99,7 @@ func (s *jsonpPollingSocket) Write(p []byte) (n int, err os.Error) {
 		len(jsonp), jsonp)
 }
 
-func (s *jsonpPollingSocket) Close() os.Error {
+func (s *jsonpPollingSocket) Close() error {
 	if !s.connected {
 		return ErrNotConnected
 	}

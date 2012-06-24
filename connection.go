@@ -1,23 +1,24 @@
 package socketio
 
 import (
-	"http"
-	"os"
-	"net"
 	"bytes"
-	"time"
+	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"sync"
+	"syscall"
+	"time"
 )
 
 var (
 	// ErrDestroyed is used when the connection has been disconnected (i.e. can't be used anymore).
-	ErrDestroyed = os.NewError("connection is disconnected")
+	ErrDestroyed = errors.New("connection is disconnected")
 
 	// ErrQueueFull is used when the send queue is full.
-	ErrQueueFull = os.NewError("send queue is full")
+	ErrQueueFull = errors.New("send queue is full")
 
-	errMissingPostData = os.NewError("Missing HTTP post data-field")
+	errMissingPostData = errors.New("Missing HTTP post data-field")
 )
 
 // Conn represents a single session and handles its handshaking,
@@ -28,8 +29,8 @@ type Conn struct {
 	sio              *SocketIO // The server.
 	sessionid        SessionID
 	online           bool
-	lastConnected    int64
-	lastDisconnected int64
+	lastConnected    time.Time
+	lastDisconnected time.Time
 	lastHeartbeat    heartbeat
 	numHeartbeats    int
 	ticker           *time.Ticker
@@ -43,11 +44,13 @@ type Conn struct {
 	dec              Decoder
 	decBuf           bytes.Buffer
 	raddr            string
+
+	UserData interface{} // User data
 }
 
 // NewConn creates a new connection for the sio. It generates the session id and
 // prepares the internal structure for usage.
-func newConn(sio *SocketIO) (c *Conn, err os.Error) {
+func newConn(sio *SocketIO) (c *Conn, err error) {
 	var sessionid SessionID
 	if sessionid, err = NewSessionID(); err != nil {
 		sio.Log("sio/newConn: newSessionID:", err)
@@ -68,11 +71,15 @@ func newConn(sio *SocketIO) (c *Conn, err os.Error) {
 	return
 }
 
-
 // String returns a string representation of the connection and implements the
 // fmt.Stringer interface.
 func (c *Conn) String() string {
 	return fmt.Sprintf("%v[%v]", c.sessionid, c.socket)
+}
+
+// SessionID return the session id of Conn
+func (c *Conn) SessionID() SessionID {
+	return c.sessionid
 }
 
 // RemoteAddr returns the remote network address of the connection in IP:port format
@@ -85,7 +92,7 @@ func (c *Conn) RemoteAddr() string {
 // it must be otherwise marshallable by the standard json package. If the send queue
 // has reached sio.config.QueueLength or the connection has been disconnected,
 // then the data is dropped and a an error is returned.
-func (c *Conn) Send(data interface{}) (err os.Error) {
+func (c *Conn) Send(data interface{}) (err error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -102,7 +109,7 @@ func (c *Conn) Send(data interface{}) (err os.Error) {
 	return nil
 }
 
-func (c *Conn) Close() os.Error {
+func (c *Conn) Close() error {
 	c.mutex.Lock()
 
 	if c.disconnected {
@@ -122,7 +129,7 @@ func (c *Conn) Close() os.Error {
 // message and the request is dropped. If the method is GET then a new socket encapsulating
 // the request is created and a new connection is establised (or the connection will be
 // reconnected). Finally, handle will wake up the reader and the flusher.
-func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (err os.Error) {
+func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (err error) {
 	c.mutex.Lock()
 
 	if c.disconnected {
@@ -154,7 +161,7 @@ func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (er
 		}
 		c.socket = s
 		c.online = true
-		c.lastConnected = time.Nanoseconds()
+		c.lastConnected = time.Now()
 
 		if !c.handshaked {
 			// the connection has not been handshaked yet.
@@ -203,10 +210,9 @@ func (c *Conn) handle(t Transport, w http.ResponseWriter, req *http.Request) (er
 }
 
 // Handshake sends the handshake to the socket.
-func (c *Conn) handshake() os.Error {
+func (c *Conn) handshake() error {
 	return c.enc.Encode(c.socket, handshake(c.sessionid))
 }
-
 
 func (c *Conn) disconnect() {
 	c.sio.Log("sio/conn: disconnected:", c)
@@ -251,7 +257,7 @@ Loop:
 			return
 		}
 
-		if (!c.online && t-c.lastDisconnected > c.sio.config.ReconnectTimeout) || int(c.lastHeartbeat) < c.numHeartbeats {
+		if (!c.online && t.Sub(c.lastDisconnected) > c.sio.config.ReconnectTimeout) || int(c.lastHeartbeat) < c.numHeartbeats {
 			c.disconnect()
 			c.mutex.Unlock()
 			break
@@ -286,7 +292,7 @@ Loop:
 // simultaneously.
 func (c *Conn) flusher() {
 	buf := new(bytes.Buffer)
-	var err os.Error
+	var err error
 	var msg interface{}
 	var n int
 
@@ -325,7 +331,7 @@ func (c *Conn) flusher() {
 
 				if err == nil {
 					break FlushLoop
-				} else if err != os.EAGAIN {
+				} else if err != syscall.EAGAIN {
 					break
 				}
 			}
@@ -353,7 +359,7 @@ func (c *Conn) reader() {
 		for {
 			nr, err := socket.Read(buf)
 			if err != nil {
-				if err != os.EAGAIN {
+				if err != syscall.EAGAIN {
 					if neterr, ok := err.(*net.OpError); ok && neterr.Timeout() {
 						c.sio.Log("sio/conn: lost connection (timeout):", c)
 						socket.Write(emptyResponse)
@@ -370,7 +376,7 @@ func (c *Conn) reader() {
 		}
 
 		c.mutex.Lock()
-		c.lastDisconnected = time.Nanoseconds()
+		c.lastDisconnected = time.Now()
 		socket.Close()
 		if c.socket == socket {
 			c.online = false

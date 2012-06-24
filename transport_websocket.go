@@ -1,21 +1,22 @@
 package socketio
 
 import (
-	"http"
-	"os"
-	"websocket"
+	"code.google.com/p/go.net/websocket"
+	"errors"
+	"net/http"
+	"time"
 )
 
-var errWebsocketHandshake = os.NewError("websocket handshake error")
+var errWebsocketHandshake = errors.New("websocket handshake error")
 
 // The websocket transport.
 type websocketTransport struct {
-	rtimeout int64 // The period during which the client must send a message.
-	wtimeout int64 // The period during which a write must succeed.
+	rtimeout time.Duration // The period during which the client must send a message.
+	wtimeout time.Duration // The period during which a write must succeed.
 }
 
 // Creates a new websocket transport with the given read and write timeouts.
-func NewWebsocketTransport(rtimeout, wtimeout int64) Transport {
+func NewWebsocketTransport(rtimeout, wtimeout time.Duration) Transport {
 	return &websocketTransport{rtimeout, wtimeout}
 }
 
@@ -51,15 +52,20 @@ func (s *websocketSocket) String() string {
 // proceed if succesfull.
 //
 // TODO: Remove the ugly channels and timeouts. They should not be needed!
-func (s *websocketSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err os.Error) {
+func (s *websocketSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err error) {
 	if s.connected {
 		return ErrConnected
 	}
 
 	f := func(ws *websocket.Conn) {
 		err = nil
-		ws.SetReadTimeout(s.t.rtimeout)
-		ws.SetWriteTimeout(s.t.wtimeout)
+		// FIXME should set before every Read and Write
+		//if s.t.rtimeout != 0 {
+		//    ws.SetReadDeadline(time.Now().Add(time.Duration(s.t.rtimeout)))
+		//}
+		//if s.t.wtimeout != 0 {
+		//    ws.SetWriteDeadline(time.Now().Add(time.Duration(s.t.wtimeout)))
+		//}
 		s.connected = true
 		s.ws = ws
 		s.close = make(chan byte)
@@ -76,7 +82,7 @@ func (s *websocketSocket) accept(w http.ResponseWriter, req *http.Request, proce
 	return
 }
 
-func (s *websocketSocket) Read(p []byte) (int, os.Error) {
+func (s *websocketSocket) Read(p []byte) (int, error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -84,7 +90,7 @@ func (s *websocketSocket) Read(p []byte) (int, os.Error) {
 	return s.ws.Read(p)
 }
 
-func (s *websocketSocket) Write(p []byte) (int, os.Error) {
+func (s *websocketSocket) Write(p []byte) (int, error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -92,7 +98,7 @@ func (s *websocketSocket) Write(p []byte) (int, os.Error) {
 	return s.ws.Write(p)
 }
 
-func (s *websocketSocket) Close() os.Error {
+func (s *websocketSocket) Close() error {
 	if !s.connected {
 		return ErrNotConnected
 	}

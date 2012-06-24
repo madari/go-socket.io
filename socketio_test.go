@@ -1,14 +1,14 @@
 package socketio
 
 import (
-	"http"
+	"fmt"
+	"net/http"
 	"testing"
 	"time"
-	"fmt"
 )
 
 const (
-	serverAddr = "127.0.0.1:6060"
+	serverAddr = "127.0.0.1:6070"
 
 	eventConnect = iota
 	eventDisconnect
@@ -48,7 +48,6 @@ func echoServer(addr string, config *Config) <-chan *event {
 
 	return events
 }
-
 
 func TestWebsocket(t *testing.T) {
 	finished := make(chan bool, 1)

@@ -1,13 +1,13 @@
 package socketio
 
 import (
-	"io"
-	"os"
 	"bytes"
+	"errors"
+	"io"
 )
 
 var (
-	ErrMalformedPayload = os.NewError("malformed payload")
+	ErrMalformedPayload = errors.New("malformed payload")
 )
 
 // A Codec wraps Encode and Decode methods.
@@ -21,10 +21,10 @@ type Codec interface {
 }
 
 type Decoder interface {
-	Decode() ([]Message, os.Error)
+	Decode() ([]Message, error)
 	Reset()
 }
 
 type Encoder interface {
-	Encode(io.Writer, interface{}) os.Error
+	Encode(io.Writer, interface{}) error
 }

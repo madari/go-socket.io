@@ -1,22 +1,22 @@
 package socketio
 
 import (
-	"http"
-	"os"
-	"io"
 	"bytes"
-	"net"
 	"fmt"
+	"io"
+	//"net"
+	"net/http"
+	"time"
 )
 
 // The xhr-multipart transport.
 type xhrMultipartTransport struct {
-	rtimeout int64 // The period during which the client must send a message.
-	wtimeout int64 // The period during which a write must succeed.
+	rtimeout time.Duration // The period during which the client must send a message.
+	wtimeout time.Duration // The period during which a write must succeed.
 }
 
 // Creates a new xhr-multipart transport with the given read and write timeouts.
-func NewXHRMultipartTransport(rtimeout, wtimeout int64) Transport {
+func NewXHRMultipartTransport(rtimeout, wtimeout time.Duration) Transport {
 	return &xhrMultipartTransport{rtimeout, wtimeout}
 }
 
@@ -49,7 +49,7 @@ func (s *xhrMultipartSocket) Transport() Transport {
 
 // Accepts a http connection & request pair. It hijacks the connection, sends headers and calls
 // proceed if succesfull.
-func (s *xhrMultipartSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err os.Error) {
+func (s *xhrMultipartSocket) accept(w http.ResponseWriter, req *http.Request, proceed func()) (err error) {
 	if s.connected {
 		return ErrConnected
 	}
@@ -57,8 +57,8 @@ func (s *xhrMultipartSocket) accept(w http.ResponseWriter, req *http.Request, pr
 	rwc, _, err := w.(http.Hijacker).Hijack()
 
 	if err == nil {
-		rwc.(*net.TCPConn).SetReadTimeout(s.t.rtimeout)
-		rwc.(*net.TCPConn).SetWriteTimeout(s.t.wtimeout)
+		//		rwc.(*net.TCPConn).SetReadTimeout(s.t.rtimeout)
+		//		rwc.(*net.TCPConn).SetWriteTimeout(s.t.wtimeout)
 
 		buf := new(bytes.Buffer)
 		buf.WriteString("HTTP/1.0 200 OK\r\n")
@@ -84,7 +84,7 @@ func (s *xhrMultipartSocket) accept(w http.ResponseWriter, req *http.Request, pr
 	return
 }
 
-func (s *xhrMultipartSocket) Read(p []byte) (n int, err os.Error) {
+func (s *xhrMultipartSocket) Read(p []byte) (n int, err error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -93,7 +93,7 @@ func (s *xhrMultipartSocket) Read(p []byte) (n int, err os.Error) {
 }
 
 // Write sends a single multipart message to the wire.
-func (s *xhrMultipartSocket) Write(p []byte) (n int, err os.Error) {
+func (s *xhrMultipartSocket) Write(p []byte) (n int, err error) {
 	if !s.connected {
 		return 0, ErrNotConnected
 	}
@@ -101,7 +101,7 @@ func (s *xhrMultipartSocket) Write(p []byte) (n int, err os.Error) {
 	return fmt.Fprintf(s.rwc, "Content-Type: text/plain\r\n\r\n%s\n--socketio\n", p)
 }
 
-func (s *xhrMultipartSocket) Close() os.Error {
+func (s *xhrMultipartSocket) Close() error {
 	if !s.connected {
 		return ErrNotConnected
 	}
