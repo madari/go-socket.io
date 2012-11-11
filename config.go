@@ -1,4 +1,5 @@
 package socketio
+
 import "time"
 
 type Config struct {

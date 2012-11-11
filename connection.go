@@ -7,8 +7,8 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
-	"syscall"
 	"sync"
+	"syscall"
 	"time"
 )
 

@@ -1,9 +1,9 @@
 package main
 
 import (
+	socketio "github.com/nightlyone/go-socket.io"
 	"log"
 	"net/http"
-	"socketio"
 	"sync"
 	"time"
 )
