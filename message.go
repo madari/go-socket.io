@@ -2,9 +2,9 @@ package socketio
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"json"
-	"os"
 )
 
 // The different message types that are available.
@@ -41,7 +41,7 @@ type ack struct {
 	id    int
 }
 
-type error struct {
+type error_ struct {
 	advice   int
 	endpoint string
 	reason   int
@@ -64,7 +64,7 @@ type Message struct {
 	typ      uint8
 }
 
-func (m *Message) Event() (string, os.Error) {
+func (m *Message) Event() (string, error) {
 	if m.typ == MessageEvent {
 		if m.event == nil {
 			m.event = &event{}
@@ -74,10 +74,10 @@ func (m *Message) Event() (string, os.Error) {
 		}
 		return m.event.Name, nil
 	}
-	return "", os.NewError("not an event")
+	return "", errors.New("not an event")
 }
 
-func (m *Message) ReadArguments(a ...interface{}) os.Error {
+func (m *Message) ReadArguments(a ...interface{}) error {
 	if m.typ == MessageEvent {
 		if m.event == nil {
 			m.event = &event{}
@@ -88,7 +88,7 @@ func (m *Message) ReadArguments(a ...interface{}) os.Error {
 		}
 		return nil
 	}
-	return os.NewError("not an event")
+	return errors.New("not an event")
 }
 
 func (m *Message) Bytes() []byte {

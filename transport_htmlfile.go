@@ -2,11 +2,10 @@ package socketio
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
-	"http"
-	"json"
 	"net"
-	"os"
+	"net/http"
 )
 
 var HTMLFile = &Transport{
@@ -19,7 +18,7 @@ var htmlfileHeader = "<html><body><script>var _ = function (msg) { parent.s._(ms
 
 // Accepts a http connection & request pair. It hijacks the connection and calls
 // proceed if succesfull.
-func htmlFileHijack(w http.ResponseWriter, req *http.Request, proceed func(Socket)) os.Error {
+func htmlFileHijack(w http.ResponseWriter, req *http.Request, proceed func(Socket)) error {
 	rwc, _, err := w.(http.Hijacker).Hijack()
 	if err == nil {
 		conn := rwc.(*net.TCPConn)
@@ -41,11 +40,11 @@ func htmlFileHijack(w http.ResponseWriter, req *http.Request, proceed func(Socke
 type htmlFileSocket struct {
 	net.Conn
 	buf *bytes.Buffer
-	rb []byte
+	rb  []byte
 }
 
 // Write sends a single message to the wire and closes the connection.
-func (s *htmlFileSocket) Write(p []byte) (int, os.Error) {
+func (s *htmlFileSocket) Write(p []byte) (int, error) {
 	s.buf.Reset()
 	s.buf.WriteString("<script>_(")
 	enc := json.NewEncoder(s.buf)
@@ -53,13 +52,12 @@ func (s *htmlFileSocket) Write(p []byte) (int, os.Error) {
 		return 0, err
 	}
 	s.buf.WriteString(");</script>")
-	
+
 	return fmt.Fprintf(s.Conn, "%x\r\n%s\r\n", s.buf.Len(), s.buf.Bytes())
 }
 
-func (s *htmlFileSocket) Receive(p *[]byte) (err os.Error) {
+func (s *htmlFileSocket) Receive(p *[]byte) (err error) {
 	_, err = s.Read(s.rb)
 	*p = s.rb
 	return
 }
-

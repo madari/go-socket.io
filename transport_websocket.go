@@ -1,12 +1,12 @@
 package socketio
 
 import (
-	"http"
-	"os"
-	"websocket"
+	"code.google.com/p/go.net/websocket"
+	"errors"
+	"net/http"
 )
 
-var ErrWebsocketHandshake = os.NewError("websocket handshake error")
+var ErrWebsocketHandshake = errors.New("websocket handshake error")
 
 var Websocket = &Transport{
 	Name:   "websocket",
@@ -14,7 +14,7 @@ var Websocket = &Transport{
 	Hijack: websocketHijack,
 }
 
-func websocketHijack(w http.ResponseWriter, req *http.Request, proceed func(Socket)) (err os.Error) {
+func websocketHijack(w http.ResponseWriter, req *http.Request, proceed func(Socket)) (err error) {
 	f := func(ws *websocket.Conn) {
 		err = nil
 		proceed(&websocketSocket{ws, nil})
@@ -27,16 +27,16 @@ func websocketHijack(w http.ResponseWriter, req *http.Request, proceed func(Sock
 
 type websocketSocket struct {
 	*websocket.Conn
-	rb     []byte
+	rb []byte
 }
 
-func (s *websocketSocket) Receive(p *[]byte) (err os.Error) {
+func (s *websocketSocket) Receive(p *[]byte) (err error) {
 	err = websocket.Message.Receive(s.Conn, &s.rb)
 	*p = s.rb
 	return
 }
 
-func (s *websocketSocket) Write(p []byte) (n int, err os.Error) {
+func (s *websocketSocket) Write(p []byte) (n int, err error) {
 	err = websocket.Message.Send(s.Conn, string(p))
 	if err == nil {
 		n = len(p)

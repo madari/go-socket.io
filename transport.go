@@ -1,9 +1,8 @@
 package socketio
 
 import (
-	"http"
 	"net"
-	"os"
+	"net/http"
 )
 
 type TransportType int
@@ -14,7 +13,7 @@ const (
 )
 
 type Transport struct {
-	Hijack      func(http.ResponseWriter, *http.Request, func(Socket)) os.Error
+	Hijack      func(http.ResponseWriter, *http.Request, func(Socket)) error
 	Name        string
 	PostEncoded bool
 	Type        TransportType
@@ -30,5 +29,5 @@ var DefaultTransports = []*Transport{
 
 type Socket interface {
 	net.Conn
-	Receive(*[]byte) os.Error
+	Receive(*[]byte) error
 }

@@ -3,7 +3,7 @@ package socketio
 import (
 	"bytes"
 	"fmt"
-	"os"
+	"io"
 	"testing"
 	"unsafe"
 )
@@ -135,7 +135,7 @@ var decodeTests = []decodeTest{
 
 func TestDecode(t *testing.T) {
 	var msg Message
-	var err os.Error
+	var err error
 	dec := &Decoder{}
 
 Test:
@@ -147,7 +147,7 @@ Test:
 
 		for i := 0; ; i++ {
 			if err = dec.Decode(&msg); err != nil {
-				if test.out == nil || (err == os.EOF && i == len(test.out)) {
+				if test.out == nil || (err == io.EOF && i == len(test.out)) {
 					continue Test
 				}
 				t.Fatal("decode:", err)
@@ -186,33 +186,33 @@ type encodeTest struct {
 var encodeTests = []encodeTest{
 	{
 		[]interface{}{
-			&error{-1, "", -1},
+			&error_{-1, "", -1},
 		},
 		frame("7::"),
 	},
 	{
 		[]interface{}{
-			&error{0, "", 2},
+			&error_{0, "", 2},
 		},
 		frame("7:::2+0"),
 	},
 	{
 		[]interface{}{
-			&error{0, "", -1},
+			&error_{0, "", -1},
 		},
 		frame("7:::+0"),
 	},
 	{
 		[]interface{}{
-			&error{-1, "/irene", 0},
+			&error_{-1, "/irene", 0},
 		},
 		frame("7::/irene:0"),
 	},
 	{
 		[]interface{}{&Message{
-			typ: MessageJSON,
+			typ:      MessageJSON,
 			endpoint: "/irene",
-			data: []byte(`"0"`),
+			data:     []byte(`"0"`),
 		}},
 		frame(`4::/irene:"0"`),
 	},
@@ -281,7 +281,7 @@ var encodeTests = []encodeTest{
 }
 
 func TestEncode(t *testing.T) {
-	var err os.Error
+	var err error
 	var buf bytes.Buffer
 	enc := &Encoder{MustFrame: true}
 
@@ -308,8 +308,8 @@ func TestEncode(t *testing.T) {
 
 type nopWriter struct{}
 
-func (nw nopWriter) Write(p []byte) (n int, err os.Error) {
-        return len(p), nil
+func (nw nopWriter) Write(p []byte) (n int, err error) {
+	return len(p), nil
 }
 
 var w = &nopWriter{}
@@ -369,7 +369,7 @@ func BenchmarkThreeFramesDecode(b *testing.B) {
 	dec := &Decoder{}
 	data := []byte(frame("3:::i\u2665am") + frame("4:1+::only") + frame("0::/human\u2665"))
 	b.SetBytes(int64(len(data)))
-	var err os.Error
+	var err error
 
 	for i := 0; i < b.N; i++ {
 		dec.Write(data)

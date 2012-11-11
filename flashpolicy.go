@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strings"
+	"time"
 )
 
 func generatePolicyFile(origins []string) []byte {
@@ -41,7 +41,7 @@ func generatePolicyFile(origins []string) []byte {
 	return buf.Bytes()
 }
 
-func ListenAndServeFlashPolicy(laddr string, origins []string) os.Error {
+func ListenAndServeFlashPolicy(laddr string, origins []string) error {
 	listener, err := net.Listen("tcp", laddr)
 	if err != nil {
 		return err
@@ -57,7 +57,8 @@ func ListenAndServeFlashPolicy(laddr string, origins []string) os.Error {
 
 		go func() {
 			defer conn.Close()
-			conn.SetTimeout(5e9)
+			now := time.Now()
+			conn.SetDeadline(now.Add(time.Duration(5e9)))
 
 			buf := make([]byte, 20)
 			if _, err := io.ReadFull(conn, buf); err != nil {

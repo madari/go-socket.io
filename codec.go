@@ -2,10 +2,10 @@ package socketio
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"json"
-	"os"
 	"strconv"
 )
 
@@ -14,7 +14,7 @@ type Encoder struct {
 	MustFrame bool
 }
 
-func (enc *Encoder) Encode(dst io.Writer, payload []interface{}) (err os.Error) {
+func (enc *Encoder) Encode(dst io.Writer, payload []interface{}) (err error) {
 	if enc.MustFrame || len(payload) > 1 {
 		for _, p := range payload {
 			enc.Reset()
@@ -38,7 +38,7 @@ type Decoder struct {
 	bytes.Buffer
 }
 
-func (dec *Decoder) Decode(msg *Message) os.Error {
+func (dec *Decoder) Decode(msg *Message) error {
 	r, rsize, err := dec.ReadRune()
 	if err != nil {
 		return err
@@ -51,15 +51,15 @@ func (dec *Decoder) Decode(msg *Message) os.Error {
 		data := dec.Bytes()
 		index := bytes.IndexRune(data, 0xFFFD)
 		if index <= 0 {
-			return os.NewError("frame length is empty or missing")
+			return errors.New("frame length is empty or missing")
 		}
 		length := positiveInt(data[:index])
 		if length < 0 {
-			return os.NewError("frame length is not a positive integer")
+			return errors.New("frame length is not a positive integer")
 		}
 		data = data[index+rsize:]
 		if len(data) < length {
-			return os.NewError("frame length is overflowing")
+			return errors.New("frame length is overflowing")
 		}
 		dec.Next(index + rsize + length)
 		return decodePacket(data[:length], msg)
@@ -74,20 +74,20 @@ func (dec *Decoder) Decode(msg *Message) os.Error {
 	return err
 }
 
-func decodePacket(data []byte, msg *Message) (err os.Error) {
+func decodePacket(data []byte, msg *Message) (err error) {
 	msg.zero()
 
 	// [message type] ':' [message id ('+')] ':' [message endpoint] (':' [message data]) 
 	parts := bytes.SplitN(data, []byte{':'}, 4)
 	if len(parts) < 3 {
-		return os.NewError("invalid number of parts")
+		return errors.New("invalid number of parts")
 	}
 
 	// [message type]
 	if i := positiveInt(parts[0]); i >= 0 && i <= 9 {
 		msg.typ = uint8(i)
 	} else {
-		return os.NewError("invalid type: " + string(parts[0]))
+		return errors.New("invalid type: " + string(parts[0]))
 	}
 
 	// [message id ('+')]
@@ -124,7 +124,7 @@ func positiveInt(p []byte) (v int) {
 	return
 }
 
-func encodePacket(dst *bytes.Buffer, packet interface{}) (err os.Error) {
+func encodePacket(dst *bytes.Buffer, packet interface{}) (err error) {
 	var msg *Message
 
 	switch t := packet.(type) {
@@ -159,7 +159,7 @@ func encodePacket(dst *bytes.Buffer, packet interface{}) (err os.Error) {
 			msg.data = []byte(fmt.Sprintf("%d", t.id))
 		}
 
-	case *error:
+	case *error_:
 		msg = &Message{typ: MessageError, endpoint: t.endpoint}
 		if t.reason >= 0 {
 			if t.advice >= 0 {

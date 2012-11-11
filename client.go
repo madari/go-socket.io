@@ -2,13 +2,14 @@ package socketio
 
 import (
 	"bytes"
+	"code.google.com/p/go.net/websocket"
+	"errors"
 	"fmt"
-	"http"
+	"io"
 	"io/ioutil"
-	"os"
+	"net/http"
 	"strings"
 	"sync"
-	"websocket"
 )
 
 type Client struct {
@@ -25,14 +26,14 @@ func (c *Client) String() string {
 	return c.sid
 }
 
-func (c *Client) Emit(name string, args ...interface{}) os.Error {
+func (c *Client) Emit(name string, args ...interface{}) error {
 	return c.Send(&event{Name: name, Args: args})
 }
 
-func (c *Client) Receive(msg *Message) (err os.Error) {
+func (c *Client) Receive(msg *Message) (err error) {
 	var incoming string
 	for {
-		if err = c.dec.Decode(msg); err == os.EOF {
+		if err = c.dec.Decode(msg); err == io.EOF {
 			if err = websocket.Message.Receive(c.ws, &incoming); err != nil {
 				return
 			}
@@ -50,7 +51,7 @@ func (c *Client) Receive(msg *Message) (err os.Error) {
 		case MessageDisconnect:
 			Log.info(c, " client: received disconnect: ", msg.Inspect())
 			c.ws.Close()
-			return os.EOF
+			return io.EOF
 
 		case MessageConnect:
 			return
@@ -74,7 +75,7 @@ func (c *Client) Receive(msg *Message) (err os.Error) {
 	return
 }
 
-func (c *Client) Reply(m *Message, a ...interface{}) os.Error {
+func (c *Client) Reply(m *Message, a ...interface{}) error {
 	ack := &ack{
 		id:   m.id,
 		data: a,
@@ -85,12 +86,12 @@ func (c *Client) Reply(m *Message, a ...interface{}) os.Error {
 	return c.Send(ack)
 }
 
-func (c *Client) Close() os.Error {
+func (c *Client) Close() error {
 	c.Send(disconnect(""))
 	return c.ws.Close()
 }
 
-func (c *Client) Send(data interface{}) (err os.Error) {
+func (c *Client) Send(data interface{}) (err error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.buf.Reset()
@@ -100,7 +101,7 @@ func (c *Client) Send(data interface{}) (err os.Error) {
 	return websocket.Message.Send(c.ws, c.buf.String())
 }
 
-func Dial(url_, origin string) (c *Client, err os.Error) {
+func Dial(url_, origin string) (c *Client, err error) {
 	var body []byte
 	var r *http.Response
 
@@ -109,17 +110,17 @@ func Dial(url_, origin string) (c *Client, err os.Error) {
 	}
 	defer r.Body.Close()
 	if r.StatusCode != 200 {
-		return nil, os.NewError("invalid status: " + r.Status)
+		return nil, errors.New("invalid status: " + r.Status)
 	}
 	if body, err = ioutil.ReadAll(r.Body); err != nil {
 		return
 	}
 	parts := strings.SplitN(string(body), ":", 4)
 	if len(parts) != 4 {
-		return nil, os.NewError("invalid handshake: " + string(body))
+		return nil, errors.New("invalid handshake: " + string(body))
 	}
 	if !strings.Contains(parts[3], "websocket") {
-		return nil, os.NewError("server does not support websockets")
+		return nil, errors.New("server does not support websockets")
 	}
 
 	c = &Client{dec: &Decoder{}, enc: &Encoder{}}
@@ -136,7 +137,7 @@ func Dial(url_, origin string) (c *Client, err os.Error) {
 	}
 	if msg.Type() != MessageConnect {
 		c.ws.Close()
-		err = os.NewError("unexpected connect message: " + msg.Inspect())
+		err = errors.New("unexpected connect message: " + msg.Inspect())
 	}
 	return
 }

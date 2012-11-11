@@ -1,19 +1,19 @@
 package socketio
 
 import (
+	"crypto/rand"
+	"io"
 	"log"
 	"os"
-	"io"
-	"crypto/rand"
 )
 
 const (
-	sessionIdLength = 16
+	sessionIdLength  = 16
 	sessionIdCharset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
 
 var (
-	Log = DefaultLogger
+	Log           = DefaultLogger
 	VerboseLogger = &Logger{debugLogger, infoLogger, warnLogger}
 	DefaultLogger = &Logger{nil, infoLogger, warnLogger}
 
@@ -62,7 +62,7 @@ func (l *Logger) warnf(format string, v ...interface{}) {
 	}
 }
 
-func newSessionId() (sid string, err os.Error) {
+func newSessionId() (sid string, err error) {
 	b := make([]byte, sessionIdLength)
 	if _, err = io.ReadFull(rand.Reader, b); err != nil {
 		return

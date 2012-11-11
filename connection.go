@@ -2,16 +2,18 @@ package socketio
 
 import (
 	"bytes"
-	"http"
+	"errors"
+	"io"
 	"io/ioutil"
 	"net"
-	"os"
+	"net/http"
 	"sync"
+	"syscall"
 	"time"
 )
 
 var (
-	ErrDisconnected = os.NewError("connection is disconnected")
+	ErrDisconnected = errors.New("connection is disconnected")
 )
 
 type Conn struct {
@@ -19,7 +21,7 @@ type Conn struct {
 	dec              *Decoder
 	disconnect       chan byte
 	disconnected     bool
-	flush            chan chan os.Error
+	flush            chan chan error
 	incoming         chan []byte
 	mutex            sync.Mutex
 	online           bool
@@ -32,7 +34,7 @@ type Conn struct {
 	transport        *Transport
 }
 
-func newConn(server *server) (c *Conn, err os.Error) {
+func newConn(server *server) (c *Conn, err error) {
 	var sid string
 	if sid, err = newSessionId(); err != nil {
 		return nil, err
@@ -42,7 +44,7 @@ func newConn(server *server) (c *Conn, err os.Error) {
 		connect:    make(chan byte),
 		dec:        &Decoder{},
 		disconnect: make(chan byte),
-		flush:      make(chan chan os.Error, 1),
+		flush:      make(chan chan error, 1),
 		incoming:   make(chan []byte, 1),
 		server:     server,
 		shutdown:   make(chan byte, 1),
@@ -53,18 +55,18 @@ func newConn(server *server) (c *Conn, err os.Error) {
 	return
 }
 
-func (c *Conn) Emit(name string, args ...interface{}) os.Error {
+func (c *Conn) Emit(name string, args ...interface{}) error {
 	return c.Send(&event{Name: name, Args: args})
 }
 
-func (c *Conn) Receive(msg *Message) (err os.Error) {
+func (c *Conn) Receive(msg *Message) (err error) {
 	for {
-		if err = c.dec.Decode(msg); err == os.EOF {
+		if err = c.dec.Decode(msg); err == io.EOF {
 			if payload, ok := <-c.incoming; ok {
 				c.dec.Write(payload)
 				continue
 			} else {
-				return os.EOF
+				return io.EOF
 			}
 		} else if err != nil {
 			break
@@ -87,7 +89,7 @@ func (c *Conn) Receive(msg *Message) (err os.Error) {
 				c.shutdown <- 1
 			}
 			c.mutex.Unlock()
-			return os.EOF
+			return io.EOF
 
 		case MessageConnect, MessageError, MessageACK, MessageNOOP:
 			Log.warn(c, " receive: (TODO) ", msg.Inspect())
@@ -99,7 +101,7 @@ func (c *Conn) Receive(msg *Message) (err os.Error) {
 				if c.disconnected {
 					Log.warn(c, " receive: unable to ack since disconnected: ", msg.Inspect())
 					c.mutex.Unlock()
-					return os.EOF
+					return io.EOF
 				}
 				c.dispatch(&ack{id: msg.id})
 				c.mutex.Unlock()
@@ -115,7 +117,7 @@ func (c *Conn) Receive(msg *Message) (err os.Error) {
 	return
 }
 
-func (c *Conn) Reply(m *Message, a ...interface{}) os.Error {
+func (c *Conn) Reply(m *Message, a ...interface{}) error {
 	ack := &ack{
 		id:   m.id,
 		data: a,
@@ -126,7 +128,7 @@ func (c *Conn) Reply(m *Message, a ...interface{}) os.Error {
 	return c.Send(ack)
 }
 
-func (c *Conn) Send(data interface{}) os.Error {
+func (c *Conn) Send(data interface{}) error {
 	c.mutex.Lock()
 	if c.disconnected {
 		c.mutex.Unlock()
@@ -137,8 +139,8 @@ func (c *Conn) Send(data interface{}) os.Error {
 	return nil
 }
 
-func (c *Conn) SendWait(data interface{}) <-chan os.Error {
-	res := make(chan os.Error, 1)
+func (c *Conn) SendWait(data interface{}) <-chan error {
+	res := make(chan error, 1)
 	c.mutex.Lock()
 	if c.disconnected {
 		c.mutex.Unlock()
@@ -171,7 +173,7 @@ func (c *Conn) close() {
 		return
 	}
 	c.queue = append(c.queue, disconnect(""))
-	res := make(chan os.Error)
+	res := make(chan error)
 	c.flush <- res
 	select {
 	case c.shutdown <- 1:
@@ -181,7 +183,7 @@ func (c *Conn) close() {
 	<-res
 }
 
-func (c *Conn) handle(t *Transport, w http.ResponseWriter, req *http.Request) (err os.Error) {
+func (c *Conn) handle(t *Transport, w http.ResponseWriter, req *http.Request) (err error) {
 	c.mutex.Lock()
 
 	if c.disconnected {
@@ -213,10 +215,11 @@ func (c *Conn) handle(t *Transport, w http.ResponseWriter, req *http.Request) (e
 	}
 
 	err = t.Hijack(w, req, func(socket Socket) {
+		now := time.Now()
 		if t.Type == PollingTransport {
-			socket.SetReadTimeout(c.server.config.PollingTimeout)
+			socket.SetReadDeadline(now.Add(c.server.config.PollingTimeout))
 		}
-		socket.SetWriteTimeout(c.server.config.WriteTimeout)
+		socket.SetWriteDeadline(now.Add(c.server.config.WriteTimeout))
 		if c.socket != nil {
 			c.socket.Close()
 		}
@@ -237,7 +240,7 @@ func (c *Conn) handle(t *Transport, w http.ResponseWriter, req *http.Request) (e
 
 func (c *Conn) flusher() {
 	var buf bytes.Buffer
-	var err os.Error
+	var err error
 	enc := &Encoder{MustFrame: true}
 
 	for res := range c.flush {
@@ -252,12 +255,12 @@ func (c *Conn) flusher() {
 		if buf.Len() == 0 {
 			err = nil
 		} else if socket == nil {
-			err = os.EINVAL
+			err = syscall.EINVAL
 		} else {
 			for {
 				if _, err = buf.WriteTo(socket); err == nil {
 					break
-				} else if err != os.EAGAIN {
+				} else if err != syscall.EAGAIN {
 					Log.info(c, " flusher: write error: ", err)
 					break
 				}
@@ -277,7 +280,7 @@ func (c *Conn) drain(socket Socket) {
 	for {
 		err := socket.Receive(&buf)
 		if err != nil {
-			if err != os.EAGAIN {
+			if err != syscall.EAGAIN {
 				if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
 					<-c.SendWait(noop(0))
 					Log.debug(c, " drain: lost connection (read timeout, noop sent)")
@@ -317,11 +320,11 @@ func (c *Conn) machine() {
 	}()
 
 	var ticker *time.Ticker
-	wait := func(ns int64) <-chan int64 {
+	wait := func(duration time.Duration) <-chan time.Time {
 		if ticker != nil {
 			ticker.Stop()
 		}
-		ticker = time.NewTicker(ns)
+		ticker = time.NewTicker(duration)
 		return ticker.C
 	}
 

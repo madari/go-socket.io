@@ -3,9 +3,8 @@ package socketio
 import (
 	"bytes"
 	"fmt"
-	"http"
 	"net"
-	"os"
+	"net/http"
 )
 
 var XHRPolling = &Transport{
@@ -16,7 +15,7 @@ var XHRPolling = &Transport{
 
 // Accepts a http connection & request pair. It hijacks the connection and calls
 // proceed if succesfull.
-func xhrPollingHijack(w http.ResponseWriter, req *http.Request, proceed func(Socket)) os.Error {
+func xhrPollingHijack(w http.ResponseWriter, req *http.Request, proceed func(Socket)) error {
 	rwc, _, err := w.(http.Hijacker).Hijack()
 	if err == nil {
 		conn := rwc.(*net.TCPConn)
@@ -43,12 +42,12 @@ type xhrPollingSocket struct {
 }
 
 // Write sends a single message to the wire and closes the connection.
-func (s *xhrPollingSocket) Write(p []byte) (int, os.Error) {
+func (s *xhrPollingSocket) Write(p []byte) (int, error) {
 	defer s.Close()
 	return fmt.Fprintf(s.Conn, "Content-Length: %d\r\n\r\n%s", len(p), p)
 }
 
-func (s *xhrPollingSocket) Receive(p *[]byte) (err os.Error) {
+func (s *xhrPollingSocket) Receive(p *[]byte) (err error) {
 	_, err = s.Read(s.rb)
 	*p = s.rb
 	return

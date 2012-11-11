@@ -2,11 +2,10 @@ package socketio
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
-	"http"
-	"json"
 	"net"
-	"os"
+	"net/http"
 	"strconv"
 )
 
@@ -17,7 +16,7 @@ var JSONPPolling = &Transport{
 	Hijack:      jsonpPollingHijack,
 }
 
-func jsonpPollingHijack(w http.ResponseWriter, req *http.Request, proceed func(Socket)) os.Error {
+func jsonpPollingHijack(w http.ResponseWriter, req *http.Request, proceed func(Socket)) error {
 	rwc, _, err := w.(http.Hijacker).Hijack()
 	if err == nil {
 		conn := rwc.(*net.TCPConn)
@@ -27,7 +26,7 @@ func jsonpPollingHijack(w http.ResponseWriter, req *http.Request, proceed func(S
 		buf.WriteString("Content-Type: text/javascript; charset=UTF-8\r\n")
 		buf.WriteString("X-XSS-Protection: 0\r\n")
 
-		i, _ := strconv.Atoui(req.FormValue("i"))
+		i, _ := strconv.ParseUint(req.FormValue("i"), 10, 0)
 
 		if _, err = buf.WriteTo(conn); err == nil {
 			proceed(&jsonpPollingSocket{conn, i, make([]byte, 1)})
@@ -38,12 +37,12 @@ func jsonpPollingHijack(w http.ResponseWriter, req *http.Request, proceed func(S
 
 type jsonpPollingSocket struct {
 	net.Conn
-	i  uint
+	i  uint64
 	rb []byte
 }
 
 // Write sends a single message to the wire and closes the connection.
-func (s *jsonpPollingSocket) Write(p []byte) (int, os.Error) {
+func (s *jsonpPollingSocket) Write(p []byte) (int, error) {
 	defer s.Close()
 
 	var buf bytes.Buffer
@@ -58,7 +57,7 @@ func (s *jsonpPollingSocket) Write(p []byte) (int, os.Error) {
 	return fmt.Fprintf(s.Conn, "Content-Length: %d\r\n\r\n%s", buf.Len(), buf.Bytes())
 }
 
-func (s *jsonpPollingSocket) Receive(p *[]byte) (err os.Error) {
+func (s *jsonpPollingSocket) Receive(p *[]byte) (err error) {
 	_, err = s.Read(s.rb)
 	*p = s.rb
 	return
