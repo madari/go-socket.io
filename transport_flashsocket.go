@@ -15,7 +15,7 @@ func NewFlashsocketTransport(rtimeout, wtimeout int64) Transport {
 	return &flashsocketTransport{&websocketTransport{rtimeout, wtimeout}}
 }
 
-// Returns the resource name.
+// Resource returns the resource name.
 func (t *flashsocketTransport) Resource() string {
 	return "flashsocket"
 }

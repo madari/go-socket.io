@@ -19,7 +19,7 @@ func NewWebsocketTransport(rtimeout, wtimeout int64) Transport {
 	return &websocketTransport{rtimeout, wtimeout}
 }
 
-// Returns the resource name.
+// Resource returns the resource name.
 func (t *websocketTransport) Resource() string {
 	return "websocket"
 }

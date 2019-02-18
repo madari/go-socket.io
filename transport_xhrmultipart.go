@@ -20,7 +20,7 @@ func NewXHRMultipartTransport(rtimeout, wtimeout int64) Transport {
 	return &xhrMultipartTransport{rtimeout, wtimeout}
 }
 
-// Returns the resource name.
+// Resource returns the resource name.
 func (t *xhrMultipartTransport) Resource() string {
 	return "xhr-multipart"
 }
