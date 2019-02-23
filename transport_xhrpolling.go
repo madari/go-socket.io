@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"os"
 	"io"
-	"net"
 	"fmt"
 )
 
@@ -56,10 +55,13 @@ func (s *xhrPollingSocket) accept(w http.ResponseWriter, req *http.Request, proc
 	}
 
 	s.req = req
-	s.rwc, _, err = w.(http.Hijacker).Hijack()
+  rwc, _, err := w.(http.Hijacker).Hijack()
+
 	if err == nil {
-		s.rwc.(*net.TCPConn).SetReadTimeout(s.t.rtimeout)
-		s.rwc.(*net.TCPConn).SetWriteTimeout(s.t.wtimeout)
+		rwc.SetReadTimeout(s.t.rtimeout)
+		rwc.SetWriteTimeout(s.t.wtimeout)
+
+    s.rwc = rwc.(io.ReadWriteCloser)
 		s.connected = true
 		proceed()
 	}

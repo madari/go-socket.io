@@ -4,7 +4,6 @@ import (
 	"http"
 	"os"
 	"io"
-	"net"
 	"strconv"
 	"json"
 	"fmt"
@@ -58,8 +57,8 @@ func (s *jsonpPollingSocket) accept(w http.ResponseWriter, req *http.Request, pr
 
 	rwc, _, err := w.(http.Hijacker).Hijack()
 	if err == nil {
-		rwc.(*net.TCPConn).SetReadTimeout(s.t.rtimeout)
-		rwc.(*net.TCPConn).SetWriteTimeout(s.t.wtimeout)
+		rwc.SetReadTimeout(s.t.rtimeout)
+		rwc.SetWriteTimeout(s.t.wtimeout)
 		s.rwc = rwc
 		s.connected = true
 		s.index = 0
