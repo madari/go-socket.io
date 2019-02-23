@@ -24,7 +24,7 @@ func NewHTMLFileTransport(rtimeout, wtimeout int64) Transport {
 	return &htmlfileTransport{rtimeout, wtimeout}
 }
 
-// Returns the resource name.
+// Resource returns the resource name.
 func (t *htmlfileTransport) Resource() string {
 	return "htmlfile"
 }

@@ -20,7 +20,7 @@ func NewXHRPollingTransport(rtimeout, wtimeout int64) Transport {
 	return &xhrPollingTransport{rtimeout, wtimeout}
 }
 
-// Returns the resource name.
+// Resource returns the resource name.
 func (t *xhrPollingTransport) Resource() string {
 	return "xhr-polling"
 }

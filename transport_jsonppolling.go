@@ -21,7 +21,7 @@ func NewJSONPPollingTransport(rtimeout, wtimeout int64) Transport {
 	return &jsonpPollingTransport{rtimeout, wtimeout}
 }
 
-// Returns the resource name.
+// Resource returns the resource name.
 func (t *jsonpPollingTransport) Resource() string {
 	return "jsonp-polling"
 }

@@ -34,7 +34,7 @@ type sioMessage struct {
 	data        []byte
 }
 
-// MessageType checks if the message starts with sioFrameDelimJSON or
+// Type checks if the message starts with sioFrameDelimJSON or
 // sioFrameDelimHeartbeat. If the prefix is something else, then the message
 // is interpreted as a basic messageText.
 func (sm *sioMessage) Type() uint8 {
