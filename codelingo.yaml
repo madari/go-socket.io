@@ -1,0 +1,6 @@
+tenets:
+  - import: codelingo/go/global-var
+  - import: codelingo/go/todo
+  - import: codelingo/go/bool-param
+  - import: codelingo/go/golint  
+  - import: codelingo/lightning-network-daemon
